@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>GALAGA</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="cabinet">
+      <canvas id="game" width="224" height="288"></canvas>
+
+      <!-- Touch controls, shown only on coarse pointers. -->
+      <div id="touch" class="hidden">
+        <button id="t-left" class="tbtn" type="button" aria-label="Left">&#9664;</button>
+        <button id="t-fire" class="tbtn tbtn-fire" type="button" aria-label="Fire">FIRE</button>
+        <button id="t-right" class="tbtn" type="button" aria-label="Right">&#9654;</button>
+      </div>
+
+      <p id="legend">
+        <b>&#8592;</b> <b>&#8594;</b> move &nbsp;&middot;&nbsp; <b>SPACE</b> fire
+        &nbsp;&middot;&nbsp; <b>P</b> pause &nbsp;&middot;&nbsp; <b>M</b> mute
+      </p>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,78 @@
+:root {
+  --bezel: #101014;
+  --ink: #8a8aa0;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  color: var(--ink);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#cabinet {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px;
+}
+
+/* The canvas is 224x288 arcade pixels, scaled up by JS to fit the viewport. */
+#game {
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #000;
+  border: 2px solid var(--bezel);
+  box-shadow: 0 0 60px rgba(60, 90, 200, 0.18);
+  transform-origin: center center;
+}
+
+#legend {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+
+#legend b { color: #cfd2e6; }
+
+#touch {
+  display: flex;
+  gap: 14px;
+  width: 100%;
+  max-width: 420px;
+  justify-content: center;
+}
+
+#touch.hidden { display: none; }
+
+.tbtn {
+  flex: 1;
+  min-height: 62px;
+  border: 1px solid #2a2a3a;
+  border-radius: 10px;
+  background: #14141c;
+  color: #cfd2e6;
+  font: inherit;
+  font-size: 20px;
+  touch-action: manipulation;
+}
+
+.tbtn:active { background: #23233a; }
+
+.tbtn-fire { flex: 1.4; color: #ff5a5a; font-size: 15px; letter-spacing: 0.1em; }
+
+@media (pointer: coarse) {
+  #legend { display: none; }
+}
