@@ -103,6 +103,7 @@ export class Game {
 
     this.keys = new Set();
     this.firePressed = false;
+    this.aimX = null;
     this.paused = false;
     this.muted = false;
 
@@ -267,6 +268,23 @@ export class Game {
     }
   }
 
+  // Steer straight to an x in arcade pixels (drag control). null hands control
+  // back to the left/right keys.
+  setAim(x) {
+    this.aimX = x;
+  }
+
+  togglePause() {
+    if (this.state !== 'play' && this.state !== 'stageIntro') return;
+    sfx.resume();
+    this.paused = !this.paused;
+  }
+
+  toggleMute() {
+    sfx.resume();
+    this.muted = sfx.toggleMute();
+  }
+
   // --- update -------------------------------------------------------------
 
   update(dt) {
@@ -367,16 +385,25 @@ export class Game {
     p.invuln = Math.max(0, p.invuln - dt);
     p.fireCd = Math.max(0, p.fireCd - dt);
 
-    const left = this.keys.has('ArrowLeft') || this.keys.has('KeyA') || this.keys.has('touchLeft');
-    const right = this.keys.has('ArrowRight') || this.keys.has('KeyD') || this.keys.has('touchRight');
     const speed = 108;
-    if (left) p.x -= speed * dt;
-    if (right) p.x += speed * dt;
+    if (this.aimX != null) {
+      // Drag control: close the gap fast, but cap the rate so a flick across
+      // the screen can't teleport the ship past incoming fire.
+      const d = this.aimX - p.x;
+      const step = speed * 2.2 * dt;
+      p.x += Math.abs(d) <= step ? d : Math.sign(d) * step;
+    } else {
+      const left = this.keys.has('ArrowLeft') || this.keys.has('KeyA') || this.keys.has('touchLeft');
+      const right = this.keys.has('ArrowRight') || this.keys.has('KeyD') || this.keys.has('touchRight');
+      if (left) p.x -= speed * dt;
+      if (right) p.x += speed * dt;
+    }
 
     const margin = p.dual ? 17 : 7;
     p.x = Math.min(Math.max(p.x, PLAYER_MIN_X + margin - 7), PLAYER_MAX_X - margin + 7);
 
-    const holding = this.keys.has('Space') || this.keys.has('touchFire');
+    const holding =
+      this.keys.has('Space') || this.keys.has('touchFire') || this.keys.has('autoFire');
     const maxShots = p.dual ? 4 : 2;
     if ((this.firePressed || holding) && p.fireCd <= 0 && this.playerBullets.length < maxShots) {
       this.fire();

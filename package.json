@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "playtest": "node tools/playtest.mjs",
-    "test:capture": "node tools/capture-test.mjs"
+    "test:capture": "node tools/capture-test.mjs",
+    "test:touch": "node tools/touch-test.mjs"
   },
   "keywords": [
     "galaga",

@@ -19,7 +19,17 @@ npm run dev
 | `P` | Pause |
 | `M` | Mute |
 
-Touch controls appear automatically on coarse-pointer devices.
+### Touch
+
+On coarse-pointer devices the game switches to touch controls automatically.
+
+- **Drag anywhere on the playfield to fly** — the ship tracks your finger and
+  auto-fires while you hold. This is the primary control.
+- A ◀ / FIRE / ▶ button row is there as a fallback, plus pause and mute, which
+  have no keyboard to fall back on.
+- The playfield scales fractionally on phones rather than snapping to whole
+  pixels, so it fills the screen instead of wasting a third of it.
+- A mouse never takes over steering, so desktop play is unchanged.
 
 ## What's implemented
 
@@ -70,6 +80,7 @@ The game is exposed as `window.game`, which the headless tools drive directly.
 npm run playtest            # bot plays for 70s, reports state + console errors
 npm run playtest -- 200 god # longer run, lives topped up to reach later stages
 npm run test:capture        # asserts the capture -> rescue -> dual chain
+npm run test:touch          # touch controls + layout on phone viewports
 ```
 
 Both write screenshots to `tools/shots/`. `playtest` also writes a
