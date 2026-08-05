@@ -11,7 +11,9 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>GALAGA</title>
-    <link rel="stylesheet" href="/src/style.css" />
+    <!-- Relative, not /src/... : an absolute path resolves to the domain root,
+         which breaks when the site is served from a subpath like /galaga/. -->
+    <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
     <div id="cabinet">
@@ -46,6 +48,6 @@
       </p>
     </div>
 
-    <script type="module" src="/src/main.js"></script>
+    <script type="module" src="./src/main.js"></script>
   </body>
 </html>
