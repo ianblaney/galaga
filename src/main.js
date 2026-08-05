@@ -23,7 +23,7 @@ function resize() {
   // In landscape the controls sit beside the playfield, so they cost width
   // rather than height. Ask the layout which way it went.
   const sideways = getComputedStyle(cabinet).flexDirection === 'row';
-  const chrome = [document.getElementById('legend'), document.getElementById('touch-hint')]
+  const chrome = [document.getElementById('legend')]
     .filter(visible)
     .reduce((h, el) => h + el.offsetHeight, 0);
 
@@ -38,10 +38,17 @@ function resize() {
   const availH = vh - chromeH;
 
   const fit = Math.min(availW / W, availH / H);
-  // Whole-pixel scaling keeps the art crisp, but on a phone it can throw away
-  // a third of the screen. Take the fractional fit when the rounding is costly.
-  const whole = Math.max(1, Math.floor(fit));
-  const scale = coarse && whole / fit < 0.85 ? fit : whole;
+  let scale;
+  if (fit < 1) {
+    // Less room than the native 224x288. Shrink, or the playfield overflows
+    // and the score row gets clipped off the top of a landscape phone.
+    scale = Math.max(fit, 0.4);
+  } else {
+    // Whole-pixel scaling keeps the art crisp, but on a phone it can throw away
+    // a third of the screen. Take the fractional fit when rounding is costly.
+    const whole = Math.floor(fit);
+    scale = coarse && whole / fit < 0.85 ? fit : whole;
+  }
 
   canvas.style.width = `${Math.round(W * scale)}px`;
   canvas.style.height = `${Math.round(H * scale)}px`;
@@ -50,6 +57,8 @@ function resize() {
 if (coarse) {
   document.getElementById('touch').classList.remove('hidden');
   document.body.classList.add('touch-mode');
+  // No fire button any more, so the ship fires for itself the whole time.
+  game.setTouch('autoFire', true);
 }
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 200));
@@ -75,30 +84,6 @@ window.addEventListener('keyup', (e) => {
   game.onKeyUp(e.code);
 });
 
-function bindHold(id, key) {
-  const el = document.getElementById(id);
-  const down = (ev) => {
-    ev.preventDefault();
-    sfx.resume();
-    // Capture so sliding a thumb off the button doesn't strand the input.
-    el.setPointerCapture?.(ev.pointerId);
-    game.setTouch(key, true);
-  };
-  const up = (ev) => {
-    ev.preventDefault();
-    el.releasePointerCapture?.(ev.pointerId);
-    game.setTouch(key, false);
-  };
-  el.addEventListener('pointerdown', down);
-  el.addEventListener('pointerup', up);
-  el.addEventListener('pointercancel', up);
-}
-
-bindHold('t-left', 'touchLeft');
-bindHold('t-right', 'touchRight');
-bindHold('t-fire', 'touchFire');
-document.getElementById('t-fire').addEventListener('pointerdown', () => game.touchFire());
-
 document.getElementById('t-pause').addEventListener('click', () => {
   game.togglePause();
   syncButtons();
@@ -114,64 +99,84 @@ function syncButtons() {
 }
 syncButtons();
 
-// --- Drag to steer ----------------------------------------------------------
-// The primary touch control: put a finger anywhere on the playfield and the
-// ship tracks it, auto-firing while held. The finger sits below the ship so it
-// never covers what you are aiming at.
-
-let dragId = null;
-
-function aimFromEvent(ev) {
-  const r = canvas.getBoundingClientRect();
-  const x = ((ev.clientX - r.left) / r.width) * W;
-  return Math.min(Math.max(x, 0), W);
-}
-
-// A mouse on a desktop keeps the keyboard behaviour it always had; only a
-// finger or stylus takes over steering.
-const steers = (ev) => ev.pointerType !== 'mouse';
-
+// Tapping the playfield starts a game (and unlocks audio), but never steers —
+// a thumb on the canvas covers the dive you are trying to read.
 canvas.addEventListener('pointerdown', (ev) => {
   ev.preventDefault();
-  sfx.resume();
-  // A tap on the title/game-over screen starts a game; it also begins a drag.
   game.touchFire();
-  if (!steers(ev)) return;
-  dragId = ev.pointerId;
-  canvas.setPointerCapture?.(ev.pointerId);
-  game.setAim(aimFromEvent(ev));
-  game.setTouch('autoFire', true);
 });
 
-canvas.addEventListener('pointermove', (ev) => {
-  if (ev.pointerId !== dragId) return;
-  ev.preventDefault();
-  game.setAim(aimFromEvent(ev));
-});
+// --- Slide strip ------------------------------------------------------------
+// The touch control: a full-width strip below the playfield. Where you put your
+// thumb along it is where the ship goes, so the whole run of the strip maps to
+// the whole run of the playfield. Firing is automatic — with no fire button
+// there is nothing to hold, and nothing to cover the screen with.
 
-function endDrag(ev) {
-  if (ev.pointerId !== dragId) return;
-  dragId = null;
-  canvas.releasePointerCapture?.(ev.pointerId);
-  game.setAim(null);
-  game.setTouch('autoFire', false);
+const pad = document.getElementById('pad');
+const knob = document.getElementById('pad-knob');
+let padId = null;
+
+// The knob has width, so the usable travel is inset by half of it at each end.
+// Aim and knob must share this geometry or the knob clips at the ends.
+function padGeometry() {
+  const r = pad.getBoundingClientRect();
+  const inset = Math.min(knob.offsetWidth / 2 || 28, r.width / 6);
+  return { r, inset, travel: Math.max(1, r.width - inset * 2) };
 }
 
-canvas.addEventListener('pointerup', endDrag);
-canvas.addEventListener('pointercancel', endDrag);
+function aimFromPad(ev) {
+  const { r, inset, travel } = padGeometry();
+  const t = (ev.clientX - r.left - inset) / travel;
+  return Math.min(Math.max(t, 0), 1);
+}
 
-// Losing the tab mid-drag must not leave the ship flying and firing.
-window.addEventListener('blur', () => {
-  dragId = null;
+function applyAim(t) {
+  const { inset, travel } = padGeometry();
+  game.setAim(t * W);
+  knob.style.left = `${inset + t * travel}px`;
+  pad.setAttribute('aria-valuenow', String(Math.round(t * 100)));
+}
+
+pad.addEventListener('pointerdown', (ev) => {
+  ev.preventDefault();
+  sfx.resume();
+  // First touch of the run also drops the coin on the title screen.
+  if (game.state === 'title' || game.state === 'gameover') game.touchFire();
+  padId = ev.pointerId;
+  pad.setPointerCapture?.(ev.pointerId);
+  pad.classList.add('active');
+  applyAim(aimFromPad(ev));
+});
+
+pad.addEventListener('pointermove', (ev) => {
+  if (ev.pointerId !== padId) return;
+  ev.preventDefault();
+  applyAim(aimFromPad(ev));
+});
+
+function endPad(ev) {
+  if (ev.pointerId !== padId) return;
+  padId = null;
+  pad.releasePointerCapture?.(ev.pointerId);
+  pad.classList.remove('active');
+  // Lift your thumb and the ship holds station rather than snapping anywhere.
+  game.setAim(null);
+}
+
+pad.addEventListener('pointerup', endPad);
+pad.addEventListener('pointercancel', endPad);
+
+// Losing the tab mid-slide must not leave the ship flying on its own.
+function releaseAll() {
+  padId = null;
   game.setAim(null);
   game.keys.clear();
-});
+  if (coarse) game.setTouch('autoFire', true);
+}
+
+window.addEventListener('blur', releaseAll);
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    dragId = null;
-    game.setAim(null);
-    game.keys.clear();
-  }
+  if (document.hidden) releaseAll();
 });
 
 // --- Loop -------------------------------------------------------------------

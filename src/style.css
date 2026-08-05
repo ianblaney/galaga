@@ -57,72 +57,117 @@ html, body {
   display: flex;
   gap: 10px;
   width: 100%;
-  max-width: 460px;
-  justify-content: center;
   align-items: stretch;
+  justify-content: center;
 }
 
 #touch.hidden { display: none; }
 
-.tbtn {
+/* The slide strip. Full width and tall enough to land a thumb on without
+   looking, because your eyes belong on the playfield. */
+#pad {
+  position: relative;
   flex: 1;
-  /* 62px is comfortably past the 44px minimum tap target on every phone. */
-  min-height: 64px;
+  min-height: 84px;
+  border: 1px solid #2a2a3a;
+  border-radius: 14px;
+  background: linear-gradient(#15151f, #101018);
+  touch-action: none;
+  overflow: hidden;
+}
+
+#pad.active { border-color: #3a3a55; }
+
+/* A centre line, so the strip reads as a track rather than a button. */
+#pad-track {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: repeating-linear-gradient(
+    to right,
+    #23233a 0 6px,
+    transparent 6px 12px
+  );
+}
+
+#pad-knob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 38%, #3b3b5c, #1d1d2c);
+  border: 1px solid #4a4a6a;
+  box-shadow: 0 0 18px rgba(90, 120, 255, 0.25);
+  pointer-events: none;
+  /* Feedback is glow only — scaling the knob would push it past the travel
+     inset and clip it at the ends of the strip. */
+  transition: box-shadow 0.08s ease-out, border-color 0.08s ease-out;
+}
+
+#pad.active #pad-knob {
+  border-color: #7d7dbb;
+  background: radial-gradient(circle at 50% 38%, #4a4a75, #24243a);
+  box-shadow: 0 0 26px rgba(120, 150, 255, 0.5);
+}
+
+#pad-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 7px;
+  text-align: center;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: #45455e;
+  pointer-events: none;
+}
+
+#pad.active #pad-label { opacity: 0; }
+
+#touch-side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+}
+
+/* Pause and mute are deliberate, low-frequency taps: keep them off to the side
+   and small, so a flying thumb never catches one. */
+.tbtn {
   border: 1px solid #2a2a3a;
   border-radius: 10px;
   background: #14141c;
   color: #cfd2e6;
   font: inherit;
-  font-size: 20px;
   touch-action: none;
 }
 
 .tbtn:active { background: #23233a; }
 
-.tbtn-fire { flex: 1.4; color: #ff5a5a; font-size: 15px; letter-spacing: 0.1em; }
-
-/* Pause and mute are deliberate, low-frequency taps: keep them small so they
-   are hard to hit by accident with the thumbs that are busy flying. */
 .tbtn-sm {
-  flex: 0 0 46px;
-  min-height: 46px;
-  align-self: center;
-  font-size: 16px;
+  width: 44px;
+  height: 38px;
+  font-size: 15px;
   color: var(--ink);
 }
-
-#touch-hint {
-  display: none;
-  margin: 0;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-align: center;
-  opacity: 0.65;
-}
-
-.touch-mode #touch-hint { display: block; }
 
 @media (pointer: coarse) {
   #legend { display: none; }
 }
 
-/* Landscape phones: the playfield is tall and thin, so put the buttons in a
-   column beside it rather than stealing the little height that is left. */
+/* Landscape phones: the strip has to stay horizontal and full width, or it has
+   no travel to slide along. Height is the scarce axis, so shrink it instead. */
 @media (pointer: coarse) and (orientation: landscape) {
-  #cabinet {
-    flex-direction: row;
-    gap: 14px;
-  }
-
-  #touch {
-    flex-direction: column;
-    width: auto;
-    flex: 0 0 92px;
-    order: 2;
-  }
-
-  .tbtn { min-height: 52px; }
-  .tbtn-sm { flex: 0 0 40px; min-height: 40px; align-self: stretch; }
-  /* Must out-specify .touch-mode #touch-hint, not just follow it. */
-  .touch-mode #touch-hint { display: none; }
+  #cabinet { gap: 6px; padding-top: 4px; }
+  #pad { min-height: 56px; }
+  #pad-knob { width: 40px; height: 40px; margin: -20px 0 0 -20px; }
+  #pad-label { display: none; }
+  .tbtn-sm { height: 26px; }
+  #touch-side { flex-direction: row; }
 }

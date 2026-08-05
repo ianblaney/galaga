@@ -17,18 +17,28 @@
     <div id="cabinet">
       <canvas id="game" width="224" height="288"></canvas>
 
-      <!-- Touch controls, shown only on coarse pointers. Dragging on the
-           playfield is the primary control; these are the fallback plus the
-           pause/mute that a phone has no keyboard for. -->
+      <!-- Touch controls, shown only on coarse pointers. The slide strip sits
+           below the playfield so the thumb never covers the game; the ship
+           fires by itself. -->
       <div id="touch" class="hidden">
-        <button id="t-left" class="tbtn" type="button" aria-label="Move left">&#9664;</button>
-        <button id="t-fire" class="tbtn tbtn-fire" type="button" aria-label="Fire">FIRE</button>
-        <button id="t-right" class="tbtn" type="button" aria-label="Move right">&#9654;</button>
-        <button id="t-pause" class="tbtn tbtn-sm" type="button" aria-label="Pause">&#8214;</button>
-        <button id="t-mute" class="tbtn tbtn-sm" type="button" aria-label="Mute">&#128265;</button>
+        <div
+          id="pad"
+          role="slider"
+          tabindex="-1"
+          aria-label="Slide to move the ship"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="50"
+        >
+          <div id="pad-track"></div>
+          <div id="pad-knob"></div>
+          <span id="pad-label">SLIDE TO MOVE</span>
+        </div>
+        <div id="touch-side">
+          <button id="t-pause" class="tbtn tbtn-sm" type="button" aria-label="Pause">&#8214;</button>
+          <button id="t-mute" class="tbtn tbtn-sm" type="button" aria-label="Mute">&#128265;</button>
+        </div>
       </div>
-
-      <p id="touch-hint">Drag on the screen to fly &middot; auto-fires while held</p>
 
       <p id="legend">
         <b>&#8592;</b> <b>&#8594;</b> move &nbsp;&middot;&nbsp; <b>SPACE</b> fire

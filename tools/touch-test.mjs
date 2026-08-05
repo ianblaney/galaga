@@ -1,5 +1,5 @@
 // Touch-control check: boots the game on phone-sized, touch-enabled viewports
-// and asserts the drag-to-steer control, the button row, and the layout.
+// and asserts the slide strip, auto-fire, the pause/mute buttons and the layout.
 // Screenshots land in tools/shots/. Run with: npm run test:touch
 //
 // Playwright is an optional dev dependency, same as the other tools here.
@@ -48,6 +48,9 @@ async function run(label, opts) {
     return {
       w: Math.round(c.width),
       h: Math.round(c.height),
+      top: Math.round(c.top),
+      bottom: Math.round(document.getElementById('cabinet').getBoundingClientRect().bottom),
+      vh: window.innerHeight,
       panelShown: !document.getElementById('touch').classList.contains('hidden'),
       overflowX: document.body.scrollWidth > window.innerWidth,
       vw: window.innerWidth,
@@ -55,10 +58,14 @@ async function run(label, opts) {
   });
 
   check(label, !layout.overflowX, 'page scrolls horizontally');
+  check(label, layout.top >= -1, `playfield clipped off the top (top=${layout.top})`);
+  check(label, layout.bottom <= layout.vh + 1,
+    `controls clipped off the bottom (bottom=${layout.bottom}, viewport=${layout.vh})`);
   check(label, layout.panelShown === touch, `button panel shown=${layout.panelShown}, expected ${touch}`);
   if (touch) {
-    check(label, layout.w >= layout.vw * 0.85 || layout.h >= 280,
-      `playfield ${layout.w}x${layout.h} is small for a ${layout.vw}px viewport`);
+    // Should claim most of whichever axis is the binding one.
+    check(label, layout.w >= layout.vw * 0.85 || layout.h >= layout.vh * 0.6,
+      `playfield ${layout.w}x${layout.h} is small for a ${layout.vw}x${layout.vh} viewport`);
   }
 
   const box = await page.locator('#game').boundingBox();
@@ -70,40 +77,69 @@ async function run(label, opts) {
   check(label, (await page.evaluate(() => window.game.state)) !== 'title', 'tap did not start a game');
 
   if (touch) {
-    // Drag left. Real touch events via CDP so pointerType is 'touch'.
-    const cy = box.y + box.height * 0.8;
+    // The strip must sit clear of the playfield, or a thumb on it covers the game.
+    const padBox = await page.locator('#pad').boundingBox();
+    check(label, padBox.y >= box.y + box.height - 1,
+      'slide strip overlaps the playfield');
+    check(label, padBox.height >= 50, `slide strip only ${padBox.height}px tall`);
+    check(label, padBox.width >= layout.vw * 0.6,
+      `slide strip only ${Math.round(padBox.width)}px of a ${layout.vw}px viewport`);
+
+    // No fire/arrow buttons should remain.
+    const gone = await page.evaluate(() =>
+      ['t-left', 't-right', 't-fire'].filter((id) => document.getElementById(id)));
+    check(label, gone.length === 0, `old buttons still present: ${gone.join(', ')}`);
+
+    // Auto-fire runs without anything held (once the stage is actually live).
+    await page.waitForFunction(() => window.game.state === 'play', null, { timeout: 8000 });
+    const shots0 = await page.evaluate(() => window.game.shots);
+    await page.waitForTimeout(700);
+    check(label, (await page.evaluate(() => window.game.shots)) > shots0,
+      'ship does not auto-fire with nothing held');
+
+    // Slide along the strip: right end, then left end.
+    const py = padBox.y + padBox.height / 2;
     const cdp = await ctx.newCDPSession(page);
     const send = (type, x) =>
       cdp.send('Input.dispatchTouchEvent', {
         type,
-        touchPoints: type === 'touchEnd' ? [] : [{ x, y: cy, id: 1 }],
+        touchPoints: type === 'touchEnd' ? [] : [{ x, y: py, id: 1 }],
       });
 
-    const shots0 = await page.evaluate(() => window.game.shots);
-    await send('touchStart', box.x + box.width / 2);
-    await page.waitForTimeout(60);
-    for (let i = 0; i <= 10; i++) {
-      await send('touchMove', box.x + box.width * (0.5 - 0.45 * (i / 10)));
+    await send('touchStart', padBox.x + padBox.width * 0.95);
+    for (let i = 0; i < 8; i++) { await send('touchMove', padBox.x + padBox.width * 0.95); await page.waitForTimeout(40); }
+    await page.waitForTimeout(300);
+    const right = await page.evaluate(() => window.game.player.x);
+    check(label, right > 180, `strip right end put the ship at x=${right.toFixed(1)}, expected near 210`);
+    const knobRight = await page.locator('#pad-knob').boundingBox();
+    check(label, knobRight.x + knobRight.width <= padBox.x + padBox.width + 1,
+      'knob clips past the right end');
+
+    for (let i = 0; i <= 12; i++) {
+      await send('touchMove', padBox.x + padBox.width * (0.95 - 0.9 * (i / 12)));
       await page.waitForTimeout(40);
     }
     await page.waitForTimeout(400);
-    const mid = await page.evaluate(() => ({
-      x: window.game.player.x,
-      auto: window.game.keys.has('autoFire'),
-      shots: window.game.shots,
-    }));
-    check(label, mid.x < 40, `ship did not follow the drag (x=${mid.x.toFixed(1)})`);
-    check(label, mid.auto, 'auto-fire not engaged while held');
-    check(label, mid.shots > shots0, 'no shots fired while held');
+    const left = await page.evaluate(() => window.game.player.x);
+    check(label, left < 40, `strip left end put the ship at x=${left.toFixed(1)}, expected near 11`);
+
+    // The knob tracks the thumb and never clips out of the strip.
+    const knobBox = await page.locator('#pad-knob').boundingBox();
+    check(label, knobBox.x >= padBox.x - 1,
+      `knob clips past the left end (${knobBox.x.toFixed(1)} vs pad ${padBox.x.toFixed(1)})`);
+    check(label, knobBox.x - padBox.x < padBox.width * 0.15,
+      'knob did not travel to the left end');
 
     await send('touchEnd', 0);
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(250);
     const after = await page.evaluate(() => ({
       aim: window.game.aimX,
+      x: window.game.player.x,
       auto: window.game.keys.has('autoFire'),
     }));
     check(label, after.aim === null, 'aim not cleared on release');
-    check(label, !after.auto, 'auto-fire stuck on after release');
+    check(label, Math.abs(after.x - left) < 12, 'ship did not hold station after release');
+    check(label, after.auto, 'auto-fire should stay on after release');
 
     // Pause and mute, which have no keyboard equivalent on a phone.
     await page.locator('#t-pause').click();
@@ -116,23 +152,28 @@ async function run(label, opts) {
     await page.waitForTimeout(120);
     check(label, await page.evaluate(() => window.game.muted), 'mute button did not mute');
 
-    // Every control must clear the 44px minimum tap target.
-    const small = await page.evaluate(() =>
-      [...document.querySelectorAll('.tbtn')]
-        .map((b) => ({ id: b.id, r: b.getBoundingClientRect() }))
-        .filter(({ r }) => r.width < 40 || r.height < 40)
-        .map(({ id }) => id));
-    check(label, small.length === 0, `tap targets too small: ${small.join(', ')}`);
+    // Tapping the playfield must not steer — that was the occlusion problem.
+    const before = await page.evaluate(() => window.game.player.x);
+    await page.touchscreen.tap(box.x + box.width * 0.9, box.y + box.height * 0.5);
+    await page.waitForTimeout(250);
+    const afterTapX = await page.evaluate(() => ({ x: window.game.player.x, aim: window.game.aimX }));
+    check(label, afterTapX.aim === null, 'playfield tap still steers');
+    check(label, Math.abs(afterTapX.x - before) < 6, 'ship moved from a playfield tap');
   } else {
     // A desktop mouse must not hijack steering.
     const x0 = await page.evaluate(() => window.game.player.x);
     await page.mouse.move(box.x + 20, box.y + box.height * 0.8);
     await page.mouse.down();
     await page.waitForTimeout(300);
-    const drifted = await page.evaluate(() => ({ x: window.game.player.x, aim: window.game.aimX }));
+    const drifted = await page.evaluate(() => ({
+      x: window.game.player.x,
+      aim: window.game.aimX,
+      auto: window.game.keys.has('autoFire'),
+    }));
     await page.mouse.up();
     check(label, drifted.aim === null, 'mouse drag took over steering on desktop');
     check(label, Math.abs(drifted.x - x0) < 1, 'ship moved on a desktop mouse drag');
+    check(label, !drifted.auto, 'desktop should not auto-fire');
   }
 
   check(label, errors.length === 0, `console errors: ${errors.join(' | ')}`);

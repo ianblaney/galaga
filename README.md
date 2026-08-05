@@ -23,12 +23,16 @@ npm run dev
 
 On coarse-pointer devices the game switches to touch controls automatically.
 
-- **Drag anywhere on the playfield to fly** — the ship tracks your finger and
-  auto-fires while you hold. This is the primary control.
-- A ◀ / FIRE / ▶ button row is there as a fallback, plus pause and mute, which
-  have no keyboard to fall back on.
-- The playfield scales fractionally on phones rather than snapping to whole
-  pixels, so it fills the screen instead of wasting a third of it.
+- **Slide a finger along the strip below the playfield.** Where your thumb sits
+  on the strip is where the ship sits on the screen, end to end. Lift off and
+  the ship holds station.
+- **Firing is automatic.** There is no fire button, so there is nothing to hold
+  and nothing to cover the screen with.
+- Nothing on the playfield itself is a control — a thumb there would hide the
+  dive you are trying to read. Tapping it only starts a game.
+- Pause and mute sit off to the side, small, out of the way of a flying thumb.
+- The playfield scales to fit the phone rather than snapping to whole pixels,
+  so it fills the screen instead of wasting a third of it.
 - A mouse never takes over steering, so desktop play is unchanged.
 
 ## What's implemented

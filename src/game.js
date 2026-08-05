@@ -393,8 +393,8 @@ export class Game {
       const step = speed * 2.2 * dt;
       p.x += Math.abs(d) <= step ? d : Math.sign(d) * step;
     } else {
-      const left = this.keys.has('ArrowLeft') || this.keys.has('KeyA') || this.keys.has('touchLeft');
-      const right = this.keys.has('ArrowRight') || this.keys.has('KeyD') || this.keys.has('touchRight');
+      const left = this.keys.has('ArrowLeft') || this.keys.has('KeyA');
+      const right = this.keys.has('ArrowRight') || this.keys.has('KeyD');
       if (left) p.x -= speed * dt;
       if (right) p.x += speed * dt;
     }
@@ -402,8 +402,10 @@ export class Game {
     const margin = p.dual ? 17 : 7;
     p.x = Math.min(Math.max(p.x, PLAYER_MIN_X + margin - 7), PLAYER_MAX_X - margin + 7);
 
+    // Auto-fire only once the stage is live: bullets do not travel during
+    // stageIntro, so firing then just parks two frozen shots on the cap.
     const holding =
-      this.keys.has('Space') || this.keys.has('touchFire') || this.keys.has('autoFire');
+      this.keys.has('Space') || (this.keys.has('autoFire') && this.state === 'play');
     const maxShots = p.dual ? 4 : 2;
     if ((this.firePressed || holding) && p.fireCd <= 0 && this.playerBullets.length < maxShots) {
       this.fire();
