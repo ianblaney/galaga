@@ -33,15 +33,37 @@ html, body {
   padding-right: max(10px, env(safe-area-inset-right));
 }
 
+/* The bezel lives on the wrapper, so both canvases sit inside one frame. */
+#stage {
+  position: relative;
+  line-height: 0;
+  background: #000;
+  border: 2px solid var(--bezel);
+  box-shadow: 0 0 60px rgba(60, 90, 200, 0.18);
+}
+
+/* The cockpit view, filling the frame behind the arcade HUD. */
+#view3d {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 /* The canvas is 224x288 arcade pixels, scaled up by JS to fit the viewport. */
 #game {
+  position: relative;
   display: block;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   background: #000;
-  border: 2px solid var(--bezel);
-  box-shadow: 0 0 60px rgba(60, 90, 200, 0.18);
   transform-origin: center center;
+}
+
+/* In cockpit mode this canvas is the HUD layer only — let the 3D view through. */
+body.fps #game {
+  background: transparent;
 }
 
 #legend {

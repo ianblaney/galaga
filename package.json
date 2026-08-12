@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "playtest": "node tools/playtest.mjs",
     "test:capture": "node tools/capture-test.mjs",
-    "test:touch": "node tools/touch-test.mjs"
+    "test:touch": "node tools/touch-test.mjs",
+    "shots:cockpit": "node tools/cockpit-shots.mjs"
   },
   "keywords": [
     "galaga",
@@ -22,5 +23,8 @@
   "devDependencies": {
     "playwright": "^1.62.0",
     "vite": "^5.4.0"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
   }
 }

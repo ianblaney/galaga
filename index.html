@@ -17,7 +17,14 @@
   </head>
   <body>
     <div id="cabinet">
-      <canvas id="game" width="224" height="288"></canvas>
+      <!-- Two stacked canvases: the cockpit view renders underneath, and the
+           224x288 arcade canvas on top carries the HUD, banners and title. In
+           ?flat mode the 3D canvas is never created and the arcade canvas
+           draws the whole game itself, exactly as it used to. -->
+      <div id="stage">
+        <canvas id="view3d"></canvas>
+        <canvas id="game" width="224" height="288"></canvas>
+      </div>
 
       <!-- Touch controls, shown only on coarse pointers. The slide strip sits
            below the playfield so the thumb never covers the game; the ship
@@ -43,7 +50,7 @@
       </div>
 
       <p id="legend">
-        <b>&#8592;</b> <b>&#8594;</b> move &nbsp;&middot;&nbsp; <b>SPACE</b> fire
+        <b>&#8592;</b> <b>&#8594;</b> fly &nbsp;&middot;&nbsp; <b>SPACE</b> fire
         &nbsp;&middot;&nbsp; <b>P</b> pause &nbsp;&middot;&nbsp; <b>M</b> mute
       </p>
     </div>

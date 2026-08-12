@@ -97,7 +97,10 @@ class Enemy {
 export class Game {
   constructor(canvas) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d', { alpha: false });
+    // Transparent, because in cockpit mode this canvas is only the HUD and the
+    // 3D view sits behind it. draw() still paints its own black background
+    // first, so the flat renderer is unaffected.
+    this.ctx = canvas.getContext('2d', { alpha: true });
     this.ctx.imageSmoothingEnabled = false;
     this.stars = new Stars();
 
@@ -889,6 +892,35 @@ export class Game {
     }
 
     this.drawExplosions(c);
+    this.drawHud(c);
+    if (this.state === 'gameover') this.drawGameOver(c);
+    this.drawBanner(c);
+
+    if (this.paused) {
+      c.fillStyle = 'rgba(0,0,0,0.6)';
+      c.fillRect(0, 0, W, H);
+      drawText(c, 'PAUSED', W / 2, H / 2 - 4, '#ffffff', 'center');
+    }
+  }
+
+  /**
+   * Everything draw() puts on top of the playfield, and nothing else: score,
+   * lives, stage flags, banners, the title screen and the pause veil.
+   *
+   * The cockpit renderer draws the world itself in 3D and then calls this, so
+   * the arcade UI is the same code in both views rather than a second
+   * implementation that can drift.
+   */
+  drawOverlay() {
+    const c = this.ctx;
+    c.clearRect(0, 0, W, H);
+
+    if (this.state === 'title') {
+      this.drawTitle(c);
+      this.drawHud(c);
+      return;
+    }
+
     this.drawHud(c);
     if (this.state === 'gameover') this.drawGameOver(c);
     this.drawBanner(c);

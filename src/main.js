@@ -1,12 +1,34 @@
 import { Game } from './game.js';
 import { W, H } from './sprites.js';
 import { sfx } from './audio.js';
+import { View3D } from './render3d/view3d.js';
 
 const canvas = document.getElementById('game');
 const game = new Game(canvas);
 
 // Exposed for headless playtesting in tools/playtest.mjs.
 window.game = game;
+
+// --- Renderer ---------------------------------------------------------------
+// The cockpit view is the game. ?flat falls back to the original top-down
+// canvas — useful on a machine with no working WebGL, and it is what the
+// headless tools use when they want to read the playfield directly.
+
+const params = new URLSearchParams(location.search);
+const wantFlat = params.has('flat');
+
+let view = null;
+if (!wantFlat) {
+  try {
+    view = new View3D(document.getElementById('view3d'), { bloom: !params.has('nobloom') });
+    document.body.classList.add('fps');
+  } catch (err) {
+    // A context failure here must not take the game with it.
+    console.warn('cockpit view unavailable, falling back to flat', err);
+    view = null;
+  }
+}
+window.view3d = view;
 
 // --- Presentation: scale the 224x288 canvas up to fit the viewport ----------
 
@@ -50,8 +72,13 @@ function resize() {
     scale = coarse && whole / fit < 0.85 ? fit : whole;
   }
 
-  canvas.style.width = `${Math.round(W * scale)}px`;
-  canvas.style.height = `${Math.round(H * scale)}px`;
+  const cssW = Math.round(W * scale);
+  const cssH = Math.round(H * scale);
+  canvas.style.width = `${cssW}px`;
+  canvas.style.height = `${cssH}px`;
+  // The 3D canvas is stretched over the same frame by CSS; it still needs its
+  // drawing buffer and projection told about the new size.
+  view?.setSize(cssW, cssH);
 }
 
 if (coarse) {
@@ -194,7 +221,12 @@ function frame(now) {
     game.update(STEP);
     acc -= STEP;
   }
-  game.draw();
+  if (view) {
+    view.draw(game, elapsed);
+    game.drawOverlay();
+  } else {
+    game.draw();
+  }
   requestAnimationFrame(frame);
 }
 
