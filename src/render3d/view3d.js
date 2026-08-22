@@ -21,6 +21,13 @@
 // windscreen and the player's own row sits down on the coaming, with the rows
 // in between spread across the glass the way they are spread down the cabinet
 // screen. Distance falls off separately, so a dive both descends and closes.
+//
+// There are two ways to watch that happen. The cockpit view puts the eye in the
+// ship, where the panel and the scope do the work. The chase view pulls the eye
+// back behind the airframe so you can see the ship you are flying — a Colonial
+// Viper, borrowed whole from the galactica-fps project. Both are the same rig
+// with the eye at a different station; nothing else in the renderer, and
+// nothing at all in game.js, knows which one is on.
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -29,6 +36,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 import { W, H } from '../sprites.js';
 import { buildBackdrop } from './backdrop.js';
+import { buildViper } from './viper.js';
 import { buildCockpit } from './cockpit.js';
 import { makeEnemy, makeFighter, makeTracer, makeBlast, makeBeam, setBossDamaged, PAL } from './models.js';
 import { starTexture, starFlareTexture } from './textures.js';
@@ -44,6 +52,21 @@ const DNEAR = 0.6; // distance of the player's own row
 const DFAR = 22; // distance of the top of the playfield
 const PITCH = 0.26; // radians the whole rig looks up by, to clear the panel
 
+// Chase view. The eye leaves the canopy and sits behind and above the tail;
+// with no panel eating the bottom of the frame it need not look up as steeply.
+const CHASE_PITCH = 0.25;
+const CHASE_EYE = [0, 0.95, 4.00]; // eye station, in the rig's own frame
+
+// The airframe, in the rig's frame. Set so the nose lands just past the arcade
+// row the ship flies on, which is where its shots are born — otherwise they
+// leave from somewhere inside the fuselage.
+const SHIP_AT = [0, -0.28, 0.30];
+// Wingtip to wingtip, in arcade pixels. The fighter sprite is 16 wide, and a
+// dual pair straddles the ship's x by 8 either side — so a Viper any wider than
+// this flies with its wing through its wingman's.
+const SHIP_SPAN_PX = 15;
+const DUAL_OFFSET = 8; // arcade px each fighter sits off centre when doubled
+
 /** How far up the playfield an arcade row is: 1 at the top, 0 at the player. */
 const upOf = (y) => (PLAYER_Y - y) / PLAYER_Y;
 
@@ -52,6 +75,25 @@ const distanceOf = (y) => DNEAR + (DFAR - DNEAR) * upOf(y);
 const lateralOf = (x) => (x - W / 2) * XS;
 
 const TMP = new THREE.Vector3();
+
+/**
+ * The player's Viper, scaled to the arcade fighter and turned to face down the
+ * tunnel. The model is built nose-along-+Z in a frame nine units long, where
+ * this field's forward is -Z and its fighter is barely one unit across, so the
+ * wrapper carries both corrections and callers can treat it as any other mesh.
+ */
+function makeViper() {
+  const viper = buildViper({ gearDown: false, powered: false });
+  // Measured rather than hard-coded: the span is an emergent property of the
+  // wingtip plates, and a constant here would quietly go stale if the model
+  // were ever retouched.
+  const span = new THREE.Box3().setFromObject(viper.group).getSize(TMP).x;
+  viper.group.scale.setScalar((SHIP_SPAN_PX * XS) / span);
+  viper.group.rotation.y = Math.PI;
+  const group = new THREE.Group();
+  group.add(viper.group);
+  return { group, viper };
+}
 
 /** World position of an arcade point. */
 function worldOf(x, y, out = new THREE.Vector3()) {
@@ -136,15 +178,32 @@ export class View3D {
 
     this.camera = new THREE.PerspectiveCamera(78, 1, 0.05, 2000);
 
-    // The rig is the airframe: it carries the eye and the cockpit, slides with
-    // the ship, and looks up by PITCH so the playfield sits above the panel.
+    // The rig is the airframe: it slides with the ship and looks up by PITCH so
+    // the playfield sits above the panel.
     this.rig = new THREE.Group();
     this.rig.rotation.x = PITCH;
-    this.rig.add(this.camera);
     this.scene.add(this.rig);
 
+    // The eye station rides the airframe. In the cockpit view it sits at the
+    // airframe origin, which is what cockpit.js assumes — its geometry is built
+    // in the camera's own frame — and in the chase view it slides back behind
+    // the tail. Everything that belongs to the pilot rather than to the ship
+    // hangs off it, so one position swap moves the whole lot.
+    this.eyeRig = new THREE.Group();
+    this.eyeRig.add(this.camera);
+    this.rig.add(this.eyeRig);
+
     this.cockpit = buildCockpit();
-    this.rig.add(this.cockpit.group);
+    this.eyeRig.add(this.cockpit.group);
+
+    // The airframe itself, seen only from outside. The second one is the dual
+    // fighter, which costs a full model, so it is not built until you earn it.
+    this.ship = makeViper();
+    this.ship.group.position.fromArray(SHIP_AT);
+    this.rig.add(this.ship.group);
+    this.shipDual = null;
+    this.chase = false;
+    this.ship.group.visible = false;
 
     // Everything the simulation owns lives in the field. It has no transform of
     // its own — worldOf() already returns world coordinates — but keeping it as
@@ -168,7 +227,20 @@ export class View3D {
     // not a lit surface competing with the ships outside.
     const panelLight = new THREE.PointLight(0x88a0d8, 1.1, 3.5, 2);
     panelLight.position.set(0, -0.10, -0.55);
-    this.rig.add(panelLight);
+    this.eyeRig.add(panelLight);
+    this.panelLight = panelLight;
+
+    // A key for the airframe, over the shoulder of the chase camera. The scene
+    // lights are set for ships that carry their own emission, and the Viper
+    // carries none — under them alone its eggshell paint reads as gunmetal.
+    // A point light rather than another directional one so its reach is bounded
+    // by the falloff: it has to light the ship and the odd close pass, and stop
+    // well short of the formation, which is lit for the cockpit view already.
+    const shipKey = new THREE.PointLight(0xdbe7ff, 9, 4.5, 2);
+    shipKey.position.set(-0.9, 1.3, 1.9);
+    this.rig.add(shipKey);
+    this.shipKey = shipKey;
+    shipKey.visible = false;
 
     // Pools, all parented to the field.
     this.enemyPool = new Pool(this.field, (type) => {
@@ -213,6 +285,30 @@ export class View3D {
     this.prevShots = 0;
     this.lateral = 0;
     this.prevPlayerX = W / 2;
+  }
+
+  /**
+   * Swap the eye between the canopy and a station behind the tail.
+   *
+   * Only the renderer changes: the simulation is untouched, so a game carries
+   * straight on across a swap, and nothing downstream of here has to be told
+   * which view is running.
+   *
+   * @returns {boolean} true if the chase view is now on.
+   */
+  toggleView() {
+    return this.setChase(!this.chase);
+  }
+
+  /** @param on true for the chase view, false for the cockpit. */
+  setChase(on) {
+    this.chase = !!on;
+    this.cockpit.group.visible = !this.chase;
+    this.panelLight.visible = !this.chase;
+    this.shipKey.visible = this.chase;
+    if (this.chase) this.eyeRig.position.fromArray(CHASE_EYE);
+    else this.eyeRig.position.set(0, 0, 0);
+    return this.chase;
   }
 
   /** CSS pixel size of the view. Called by the same resize pass as the 2D canvas. */
@@ -289,9 +385,14 @@ export class View3D {
     this.prevLives = game.lives;
     this.shake = Math.max(0, this.shake - dt * 1.6);
 
+    // In the cockpit the bank *is* the roll of the world, because the eye is
+    // bolted to the airframe. In the chase view the eye is not, so most of the
+    // roll moves onto the ship itself, where you can watch it happen — a camera
+    // that rolls with the ship shows a level ship over a tilting starfield.
     const bank = -this.lateral * 0.16;
     this.rig.position.set(lateralOf(playerX), 0, 0);
-    this.rig.rotation.set(PITCH, 0, bank);
+    this.rig.rotation.set(this.chase ? CHASE_PITCH : PITCH, 0,
+      this.chase ? bank * 0.35 : bank);
     if (this.shake > 0) {
       const k = this.shake * this.shake * 0.12;
       this.rig.position.x += (Math.random() * 2 - 1) * k;
@@ -303,6 +404,7 @@ export class View3D {
     this.eye.setFromMatrixPosition(this.camera.matrixWorld);
     this.backdrop.update(dt, this.eye, game.state !== 'title');
 
+    this.syncShip(game, bank);
     this.syncEnemies(game);
     this.syncShots(game);
     this.syncEffects(game);
@@ -312,6 +414,47 @@ export class View3D {
 
     if (this.composer) this.composer.render(dt);
     else this.renderer.render(this.scene, this.camera);
+  }
+
+  /**
+   * The player's own airframe. It hangs off the rig rather than off the field,
+   * so it slides and pitches with the eye for free and needs no arcade mapping
+   * of its own — the rig is already parked on the player's row.
+   */
+  syncShip(game, bank) {
+    const p = game.player;
+    // Nothing to draw from inside it, and on the frames after you are hit the
+    // simulation has no live fighter to draw at all.
+    const show = this.chase && (!p || p.alive);
+    this.ship.group.visible = show;
+    if (this.shipDual) this.shipDual.group.visible = false;
+    if (!show) return;
+
+    // Doubling up straddles the ship's own x by 8px either side, exactly as the
+    // flat view draws it, so the pair sits astride the boresight you aim with.
+    const dual = !!(p && p.dual);
+    const off = dual ? DUAL_OFFSET * XS : 0;
+    if (dual && !this.shipDual) {
+      this.shipDual = makeViper();
+      this.shipDual.group.position.fromArray(SHIP_AT);
+      this.rig.add(this.shipDual.group);
+    }
+
+    // Roll beyond whatever the rig already took, so the ship banks against the
+    // frame instead of sitting frozen in the middle of it.
+    const roll = bank * 2.2;
+    const thrust = 0.3 + Math.abs(this.lateral) * 0.5;
+    const flying = game.state !== 'title';
+    const flight = dual ? [[this.ship, -1], [this.shipDual, 1]] : [[this.ship, 0]];
+    for (const [ship, sx] of flight) {
+      ship.group.visible = true;
+      ship.group.position.x = SHIP_AT[0] + sx * off;
+      // The rig looks up so the playfield clears the bottom of the frame; the
+      // ship does not, or it would fly permanently nose-high up the tunnel.
+      ship.group.rotation.set(-CHASE_PITCH, 0, roll);
+      ship.viper.setPowered(flying);
+      ship.viper.setThrust(thrust);
+    }
   }
 
   syncEnemies(game) {
@@ -443,7 +586,10 @@ export class View3D {
     // offset it would be behind the canopy rail — so it is flown a little way
     // out ahead, where you can see it holding station off your wing.
     const p = game.player;
-    const dual = p && p.alive && p.dual;
+    // From the chase view the wingman is a real airframe flying beside you, and
+    // syncShip draws it; this one is the cockpit's, flown out where the canopy
+    // rail does not hide it.
+    const dual = p && p.alive && p.dual && !this.chase;
     this.wingman.visible = !!dual;
     if (dual) {
       this.aim(this.wingman, p.x + 8, PLAYER_Y - 26, p.x + 8, PLAYER_Y - 34);

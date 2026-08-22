@@ -1,6 +1,7 @@
 // Screenshots of the cockpit view at the moments worth looking at: the title,
 // the formation assembling, a settled formation, a dive on the boresight, and
-// a tractor beam open overhead.
+// a tractor beam open overhead — plus the chase view, where the thing being
+// looked at is the ship itself.
 //
 // Visual iteration only — the assertions about whether the game still *works*
 // live in playtest.mjs and capture-test.mjs, which are renderer-agnostic
@@ -70,6 +71,28 @@ await page.keyboard.down('ArrowLeft');
 await page.waitForTimeout(500);
 await shot('fps-bank');
 await page.keyboard.up('ArrowLeft');
+
+// Outside the ship. The formation has to still be up there, the Viper has to
+// sit in the lower part of the frame without hiding it, and the ship has to
+// visibly roll when you steer.
+await page.keyboard.press('KeyV');
+await page.waitForTimeout(400);
+console.log('chase view:', await page.evaluate(() => window.view3d.chase));
+await shot('fps-chase');
+await page.keyboard.down('ArrowRight');
+await page.waitForTimeout(600);
+await shot('fps-chase-bank');
+await page.keyboard.up('ArrowRight');
+
+// The dual fighter, which in this view is a second airframe on your wing.
+await page.evaluate(() => { window.game.player.dual = true; });
+await page.waitForTimeout(400);
+await shot('fps-chase-dual');
+await page.evaluate(() => { window.game.player.dual = false; });
+
+await page.keyboard.press('KeyV');
+await page.waitForTimeout(300);
+if (await page.evaluate(() => window.view3d.chase)) note('V did not swap back to the cockpit');
 
 // A dive, aimed straight down the boresight. `dir` is not optional — leaving
 // it out builds the dive path from NaN and the enemy vanishes.

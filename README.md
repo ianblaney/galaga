@@ -1,9 +1,10 @@
 # GALAGA
 
-A Galaga-style formation shooter, played from the cockpit. The formation hangs
-off in space ahead of you, dives come down the tunnel at your canopy, and the
-tractor beam opens directly overhead. Everything is generated in code — the
-sprites, font, sound, flight paths, ships, cockpit and nebula. No art assets.
+A Galaga-style formation shooter, played from the cockpit — or from behind the
+ship, if you would rather watch it fly. The formation hangs off in space ahead
+of you, dives come down the tunnel at your canopy, and the tractor beam opens
+directly overhead. Everything is generated in code — the sprites, font, sound,
+flight paths, ships, cockpit, Viper and nebula. No art assets.
 
 ```bash
 npm install
@@ -20,6 +21,7 @@ also the automatic fallback if the browser has no WebGL.
 | --- | --- |
 | `←` `→` / `A` `D` | Fly |
 | `SPACE` | Fire (also starts the game) |
+| `V` | Swap view — cockpit / outside |
 | `P` | Pause |
 | `M` | Mute |
 
@@ -34,7 +36,8 @@ On coarse-pointer devices the game switches to touch controls automatically.
   and nothing to cover the screen with.
 - Nothing on the playfield itself is a control — a thumb there would hide the
   dive you are trying to read. Tapping it only starts a game.
-- Pause and mute sit off to the side, small, out of the way of a flying thumb.
+- Pause, mute and the view swap sit off to the side, small, out of the way of a
+  flying thumb.
 - The playfield scales to fit the phone rather than snapping to whole pixels,
   so it fills the screen instead of wasting a third of it.
 - A mouse never takes over steering, so desktop play is unchanged.
@@ -42,6 +45,42 @@ On coarse-pointer devices the game switches to touch controls automatically.
   ship actually moved rather than which input moved it, so the slide strip, the
   arrow keys and the headless bot all deflect it without any of them knowing
   the cockpit exists.
+
+## The two views
+
+Same renderer, same rig, eye at a different station on it.
+
+**The cockpit** is the default: the eye is bolted to the airframe, the panel and
+the tactical scope do the work, and the ship you are flying is the frame you are
+looking through.
+
+**Outside** (`V`, or `?chase`) slides the eye back behind the tail, and the ship
+appears — a Colonial Viper Mark II, lifted whole out of the galactica-fps
+project next door, exterior only. There it carried a cockpit interior of its
+own; here the interior is this project's `cockpit.js`, built in the camera's
+frame at a scale of its own, so only the hull came across.
+
+The Viper is scaled by measuring its own wingspan and matching it to the arcade
+fighter — 15 arcade pixels, which is what makes a dual fighter fly beside its
+wingman rather than through it, since the simulation puts the pair 8px either
+side of the ship's x. It hangs off the rig rather than off the field, so it
+slides, pitches and banks with the eye and needs no arcade mapping of its own.
+
+Two things change when the eye leaves the canopy:
+
+- **The roll moves onto the ship.** In the cockpit the bank *is* the roll of the
+  world, because the eye is part of the airframe. Outside it is not, so the
+  camera keeps a fraction of the bank and the ship takes the rest — a camera
+  that rolls fully with the ship shows a level ship over a tilting starfield,
+  which is the one thing a chase view exists to avoid.
+- **The ship gets its own key light.** The scene is lit for craft that carry
+  their own emission, and the Viper carries none: under those lights alone its
+  eggshell paint reads as gunmetal. The key is a point light over the camera's
+  shoulder, bounded by its falloff so it reaches the ship and the odd close pass
+  and stops well short of the formation.
+
+The panel, the scope and the drift ladder are the cockpit's, so outside you fly
+on what you can see — which is the trade the view is for.
 
 ## The cockpit view
 
@@ -122,6 +161,8 @@ every 70,000 after.
 | `src/audio.js` | Synthesised WebAudio effects |
 | `src/render3d/view3d.js` | Arcade coordinates → cockpit view; entity pools |
 | `src/render3d/cockpit.js` | Canopy, panel, the moving stick, scope, HUD |
+| `src/render3d/viper.js` | The player's ship, seen from outside |
+| `src/render3d/viperSkin.js` | Baked panel seams, fasteners and weathering |
 | `src/render3d/models.js` | Ships, tracers, blasts and the tractor cone |
 | `src/render3d/backdrop.js` | Nebula shell, starfield, streaming near dust |
 | `src/render3d/textures.js` | Baked nebula, star sprites, beam ramp |
@@ -148,9 +189,10 @@ npm run shots:cockpit       # cockpit screenshots at the moments worth seeing
 
 The first three read `window.game` rather than pixels, so they are unaffected by
 which renderer is running. `shots:cockpit` is the visual one: it captures the
-title, the formation assembling, a settled formation, a bank, a dive on the
-boresight, a close pass, an open tractor beam, a shot in flight, the phone
-layout with the stick deflected, and the `?flat` fallback. It fails the run on
+title, the formation assembling, a settled formation, a bank, the ship from
+outside — level, banked, and doubled up — a dive on the boresight, a close pass,
+an open tractor beam, a shot in flight, the phone layout with the stick
+deflected, and the `?flat` fallback. It fails the run on
 any console error, and reports errors as they happen — a render error kills the
 frame loop, so a later wait would otherwise hang with nothing to show for it.
 

@@ -12,7 +12,8 @@ window.game = game;
 // --- Renderer ---------------------------------------------------------------
 // The cockpit view is the game. ?flat falls back to the original top-down
 // canvas — useful on a machine with no working WebGL, and it is what the
-// headless tools use when they want to read the playfield directly.
+// headless tools use when they want to read the playfield directly. ?chase
+// opens outside the ship instead of in it; V swaps either way at any time.
 
 const params = new URLSearchParams(location.search);
 const wantFlat = params.has('flat');
@@ -21,6 +22,7 @@ let view = null;
 if (!wantFlat) {
   try {
     view = new View3D(document.getElementById('view3d'), { bloom: !params.has('nobloom') });
+    if (params.has('chase')) view.setChase(true);
     document.body.classList.add('fps');
   } catch (err) {
     // A context failure here must not take the game with it.
@@ -96,12 +98,20 @@ resize();
 
 const HANDLED = new Set([
   'ArrowLeft', 'ArrowRight', 'KeyA', 'KeyD', 'Space', 'Enter', 'KeyP', 'KeyM',
+  'KeyV',
 ]);
 
 window.addEventListener('keydown', (e) => {
   if (!HANDLED.has(e.code)) return;
   e.preventDefault();
   if (e.repeat) return;
+  // The view swap is the renderer's business, not the game's, so it never
+  // reaches game.js — which is what keeps the simulation ignorant of how it is
+  // being drawn. In ?flat there is no 3D view and the key does nothing.
+  if (e.code === 'KeyV') {
+    toggleView();
+    return;
+  }
   game.onKeyDown(e.code);
 });
 
@@ -111,6 +121,12 @@ window.addEventListener('keyup', (e) => {
   game.onKeyUp(e.code);
 });
 
+function toggleView() {
+  if (!view) return;
+  view.toggleView();
+  syncButtons();
+}
+
 document.getElementById('t-pause').addEventListener('click', () => {
   game.togglePause();
   syncButtons();
@@ -119,10 +135,19 @@ document.getElementById('t-mute').addEventListener('click', () => {
   game.toggleMute();
   syncButtons();
 });
+// Hidden outright without a 3D view: a button that cannot do anything is worse
+// than no button, and on ?flat there is nothing to swap between.
+const viewBtn = document.getElementById('t-view');
+if (view) viewBtn.addEventListener('click', toggleView);
+else viewBtn.classList.add('hidden');
 
 function syncButtons() {
   document.getElementById('t-pause').textContent = game.paused ? '▶' : '‖';
   document.getElementById('t-mute').textContent = game.muted ? '\u{1F507}' : '\u{1F509}';
+  // The label is the view you would get by pressing it, not the one you are in.
+  viewBtn.textContent = view && view.chase ? '\u{1F441}' : '\u{1F6F8}';
+  viewBtn.setAttribute(
+    'aria-label', view && view.chase ? 'Cockpit view' : 'Outside view');
 }
 syncButtons();
 

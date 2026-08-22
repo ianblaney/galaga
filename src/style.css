@@ -172,6 +172,8 @@ body.fps #game {
 
 .tbtn:active { background: #23233a; }
 
+.tbtn.hidden { display: none; }
+
 .tbtn-sm {
   width: 44px;
   height: 38px;
