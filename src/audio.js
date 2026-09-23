@@ -65,6 +65,7 @@ class Sfx {
   shoot() { this.tone('square', 900, 180, 0.09, 0.28); }
   enemyShoot() { this.tone('sawtooth', 320, 90, 0.14, 0.18); }
   killSmall() { this.noise(0.18, 1800, 200, 0.5); }
+  bossHit() { this.tone('square', 520, 260, 0.07, 0.22); this.noise(0.08, 3000, 800, 0.3); }
   killBoss() { this.noise(0.34, 1200, 90, 0.65); this.tone('square', 200, 60, 0.3, 0.2); }
   playerDie() { this.noise(0.7, 900, 60, 0.7); this.tone('sawtooth', 380, 40, 0.7, 0.3); }
   dive() { this.tone('square', 180, 640, 0.22, 0.12); }

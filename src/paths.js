@@ -48,6 +48,29 @@ export class Path {
     return this;
   }
 
+  /**
+   * Steer at (tx, ty), turning no tighter than `radius`, until the pen has
+   * dropped to ty. This is what makes an attack an attack: the path is bent
+   * toward wherever the player was when it launched, rather than being a fixed
+   * shape you can learn to stand beside.
+   *
+   * `wobble` (degrees) sways the aim either side of the target on a `wave`-px
+   * cycle, for a weaving run.
+   */
+  seek(tx, ty, radius, { wobble = 0, wave = 80, limit = 700 } = {}) {
+    const maxTurn = STEP / radius;
+    for (let d = 0; d < limit && this.y < ty; d += STEP) {
+      const sway = wobble * DEG * Math.sin((d / wave) * Math.PI * 2);
+      const want = Math.atan2(ty - this.y, tx - this.x) + sway;
+      const off = Math.atan2(Math.sin(want - this.a), Math.cos(want - this.a));
+      this.a += Math.max(-maxTurn, Math.min(maxTurn, off));
+      this.x += Math.cos(this.a) * STEP;
+      this.y += Math.sin(this.a) * STEP;
+      this.pts.push({ x: this.x, y: this.y });
+    }
+    return this;
+  }
+
   get points() {
     return this.pts;
   }
@@ -95,6 +118,45 @@ export function divePath(x, y, dir) {
     .line(420).points; // long enough to always clear the bottom of the screen
 }
 
+/**
+ * A dive aimed at the player, shaped by who is flying it. Every type lifts out
+ * of its rank and rolls outward through a half loop, then:
+ *
+ *   bee        a tight, direct run at you — and sometimes a loop right in
+ *              front of the ship before it leaves, as the arcade bees do
+ *   butterfly  a weaving run that is harder to lead with a shot
+ *   boss       a wide, heavy sweep
+ *
+ * `dir` is the side to break toward (-1 left, 1 right); (tx, ty) is where the
+ * player was at launch.
+ */
+export function attackPath(type, x, y, dir, tx, ty, { loop = false } = {}) {
+  // Lift out of the rank and roll outward through a half loop, so the run
+  // starts on the outer side already heading down.
+  const p = new Path(x, y, 270).line(4).turn(13, dir * 180);
+  if (type === 'bee') {
+    p.seek(tx, ty - 34, 40);
+    if (loop) p.turn(24, dir * 320);
+    p.line(360);
+  } else if (type === 'butterfly') {
+    p.seek(tx, ty - 8, 46, { wobble: 42, wave: 96 }).line(360);
+  } else {
+    p.seek(tx, ty - 14, 64).line(360);
+  }
+  return p.points;
+}
+
+/**
+ * The same path, picked up and moved so it starts at (x, y). Escorts and
+ * wingmates fly their leader's line from their own slot, which is what keeps
+ * a boss and its escorts in formation all the way down.
+ */
+export function offsetPath(pts, x, y) {
+  const dx = x - pts[0].x;
+  const dy = y - pts[0].y;
+  return pts.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+}
+
 /** A boss run that stops mid-screen above `targetX` to open its tractor beam. */
 export function beamApproachPath(x, y, targetX) {
   const dir = targetX < x ? -1 : 1;
@@ -124,15 +186,33 @@ function challengeB() {
   return new Path(-16, 70, 20).line(100).turn(36, 300).line(40).turn(30, -140).line(320).points;
 }
 
+// In from high on the side, a wide S across the middle of the screen, out.
+function challengeC() {
+  return new Path(-16, 40, 25).line(60).turn(40, 110).turn(36, -200).line(30).turn(44, 150).line(320).points;
+}
+
+// Straight down the middle, a tight loop above the player, out the side.
+function challengeD() {
+  return new Path(96, -16, 90).line(110).turn(22, -380).line(20).turn(30, 110).line(320).points;
+}
+
 const CHALLENGES = [
   challengeA,
   () => mirror(challengeA()),
   challengeB,
   () => mirror(challengeB()),
+  challengeC,
+  () => mirror(challengeC()),
+  challengeD,
+  () => mirror(challengeD()),
 ];
 
-export function challengePath(index) {
-  return CHALLENGES[index % CHALLENGES.length]();
+/**
+ * Path for a challenging-stage group. `round` is which challenging stage this
+ * is (0 for the first), and rotates the set so each round opens differently.
+ */
+export function challengePath(index, round = 0) {
+  return CHALLENGES[(index + round * 2) % CHALLENGES.length]();
 }
 
 /** After a dive, enemies re-enter from the top and curve back toward formation. */

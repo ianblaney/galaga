@@ -13,7 +13,7 @@ const SKY_R = 900;
 // Near field: a box of dust the camera sits inside, recycled front to back.
 const DRIFT_COUNT = 900;
 const DRIFT_HALF = 46; // half-extent of the box, in world units
-const DRIFT_SPEED = 26; // world units per second, toward the camera
+const DRIFT_SPEED = 26; // world units per second, toward the camera (+Z)
 
 function skyPoint(yawDeg, pitchDeg, r = SKY_R) {
   const yaw = (yawDeg * Math.PI) / 180;
@@ -143,7 +143,7 @@ export function buildBackdrop(scene, renderer) {
   for (let i = 0; i < DRIFT_COUNT; i++) {
     drift[i * 3] = (Math.random() * 2 - 1) * DRIFT_HALF;
     drift[i * 3 + 1] = (Math.random() * 2 - 1) * DRIFT_HALF;
-    drift[i * 3 + 2] = Math.random() * DRIFT_HALF * 2;
+    drift[i * 3 + 2] = -Math.random() * DRIFT_HALF * 2;
     dc.setHSL(0.55 + Math.random() * 0.12, 0.35, 0.55 + Math.random() * 0.3);
     driftCol[i * 3] = dc.r;
     driftCol[i * 3 + 1] = dc.g;
@@ -179,11 +179,13 @@ export function buildBackdrop(scene, renderer) {
       const step = moving ? DRIFT_SPEED * dt : 0;
       for (let i = 0; i < DRIFT_COUNT; i++) {
         const zi = i * 3 + 2;
-        arr[zi] -= step;
+        // The ship flies toward -Z, so the dust it passes travels the other
+        // way: it comes at the canopy from ahead and streams out behind.
+        arr[zi] += step;
         // Recycle anything that has fallen behind the eye, or drifted out of
         // the box laterally because the ship slid sideways.
-        if (arr[zi] < eye.z - DRIFT_HALF * 0.4) {
-          arr[zi] = eye.z + DRIFT_HALF * 1.6;
+        if (arr[zi] > eye.z + DRIFT_HALF * 0.4) {
+          arr[zi] = eye.z - DRIFT_HALF * 1.6;
           arr[i * 3] = eye.x + (Math.random() * 2 - 1) * DRIFT_HALF;
           arr[i * 3 + 1] = eye.y + (Math.random() * 2 - 1) * DRIFT_HALF;
         } else if (Math.abs(arr[i * 3] - eye.x) > DRIFT_HALF) {

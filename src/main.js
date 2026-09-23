@@ -228,7 +228,14 @@ function releaseAll() {
 
 window.addEventListener('blur', releaseAll);
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) releaseAll();
+  if (!document.hidden) return;
+  releaseAll();
+  // Coming back to a tab should not mean coming back to a wreck: pause, and
+  // let the player unpause when they are ready.
+  if (!game.paused && (game.state === 'play' || game.state === 'stageIntro')) {
+    game.togglePause();
+    syncButtons();
+  }
 });
 
 // --- Loop -------------------------------------------------------------------

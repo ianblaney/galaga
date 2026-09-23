@@ -126,12 +126,22 @@ the front of the panel where you can watch it move.
 ## What's implemented
 
 **Formation entries.** Each stage sends five flights of eight along looping
-entry paths before they settle into a 40-slot formation that sways and breathes
-— faster and wider as its ranks thin out.
+entry paths before they settle into a 40-slot formation. It sways — wider as its
+ranks thin out — and once the whole stage has arrived it starts to breathe,
+opening and closing about its centre. From stage 2 the incoming flights take the
+odd shot on their way in.
 
-**Dive attacks.** An attack director pulls enemies out of formation on curved
-dive paths. Bosses bring butterfly escorts. Anything that flies off the bottom
-re-enters from the top and flies back to its slot.
+**Dive attacks.** An attack director pulls enemies out of formation. A dive is
+aimed at where you are when it launches, so standing still is never safe, and
+each type flies it its own way: bees make a direct run and, more often as the
+stages go on, loop right in front of you; butterflies weave; bosses sweep wide.
+A boss's escorts, and a diver's wingmate, fly the leader's own line from their
+own slot, so they come down as one formation. Anything that flies off the
+bottom re-enters from the top and flies back to its slot.
+
+**Respawn.** A new ship waits until the dives already in flight have played out,
+with `READY` up, and nothing new launches while you are gone — so you are never
+born into an attack.
 
 **Tractor beam capture.** A boss Galaga occasionally breaks formation, hovers
 above you and opens a tractor beam. Get caught and you lose a ship — it's towed
@@ -139,11 +149,13 @@ up and docked beneath the boss.
 
 **Dual fighter.** Shoot that boss down *while it is diving* and your captured
 fighter is freed; it flies back and docks alongside you for double width and
-double firepower. Kill the boss while it sits in formation and the captive dies
-with it — same as the arcade.
+double firepower. A hit on the pair costs only the fighter that was hit, not a
+life. Kill the boss while it sits in formation and the captive dies with it —
+same as the arcade.
 
 **Challenging stages.** Every fourth stage is a bonus round: 40 enemies trace
-flight patterns without shooting. Hit all of them for a 10,000 point perfect
+flight patterns without shooting, drawn from four shapes and their mirrors, in
+an order that shifts each round. Hit all of them for a 10,000 point perfect
 bonus.
 
 **Scoring.** Enemies are worth double when diving. A boss is worth 400 diving
@@ -164,6 +176,7 @@ every 70,000 after.
 | `src/render3d/viper.js` | The player's ship, seen from outside |
 | `src/render3d/viperSkin.js` | Baked panel seams, fasteners and weathering |
 | `src/render3d/models.js` | Ships, tracers, blasts and the tractor cone |
+| `src/render3d/particles.js` | Kill debris, attack-run exhaust, enemy shot tails |
 | `src/render3d/backdrop.js` | Nebula shell, starfield, streaming near dust |
 | `src/render3d/textures.js` | Baked nebula, star sprites, beam ramp |
 
@@ -182,7 +195,7 @@ The game is exposed as `window.game`, which the headless tools drive directly.
 ```bash
 npm run playtest            # bot plays for 70s, reports state + console errors
 npm run playtest -- 200 god # longer run, lives topped up to reach later stages
-npm run test:capture        # asserts the capture -> rescue -> dual chain
+npm run test:capture        # capture -> rescue -> dual, half-loss, respawn hold
 npm run test:touch          # touch controls + layout on phone viewports
 npm run shots:cockpit       # cockpit screenshots at the moments worth seeing
 ```

@@ -140,6 +140,39 @@ const shots = await page.evaluate(() => {
 });
 check('dual fighter fires two shots', shots === 2, `${shots} bullets`);
 
+// 6. A hit on a dual fighter costs the half that was hit, not a life.
+const halfLoss = await page.evaluate(() => {
+  const g = window.game;
+  const p = g.player;
+  const lives = g.lives;
+  const x = p.x;
+  p.invuln = 0;
+  g.killPlayer(x + 8); // hit on the right-hand fighter
+  return { lives: g.lives - lives, alive: p.alive, dual: p.dual, moved: p.x - x };
+});
+check(
+  'a hit on a dual fighter only loses that fighter',
+  halfLoss.lives === 0 && halfLoss.alive && !halfLoss.dual && halfLoss.moved === -8,
+  JSON.stringify(halfLoss),
+);
+
+// 7. A new ship waits for the dive in flight to clear before it appears.
+const respawn = await page.evaluate(async () => {
+  const { attackPath } = await import('/src/paths.js');
+  const g = window.game;
+  const diver = g.enemies.find((e) => e.state === 'form');
+  diver.follow(attackPath(diver.type, diver.x, diver.y, 1, g.player.x, 258), 'dive', 1);
+  g.player.invuln = 0;
+  g.killPlayer();
+  g.player.respawnT = 0;
+  g.updatePlayer(1 / 60);
+  const heldBack = !g.player.alive;
+  diver.state = 'form';
+  g.updatePlayer(1 / 60);
+  return { heldBack, backOnceClear: g.player.alive };
+});
+check('respawn waits for dives in flight', respawn.heldBack && respawn.backOnceClear, JSON.stringify(respawn));
+
 if (errors.length) console.log(`ERRORS:\n${errors.join('\n')}`);
 const failed = checks.filter((c) => !c.pass).length + (errors.length ? 1 : 0);
 console.log(`\n${checks.length - checks.filter((c) => !c.pass).length}/${checks.length} checks passed`);

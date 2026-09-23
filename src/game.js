@@ -1,5 +1,5 @@
 import { W, H, SPR, drawText } from './sprites.js';
-import { entryPath, divePath, beamApproachPath, reentryPath, challengePath } from './paths.js';
+import { entryPath, attackPath, offsetPath, beamApproachPath, reentryPath, challengePath } from './paths.js';
 import { Stars } from './stars.js';
 import { sfx } from './audio.js';
 
@@ -40,6 +40,14 @@ const SCORE = {
   bee: { form: 50, dive: 100 },
   butterfly: { form: 80, dive: 160 },
   boss: { form: 150, dive: 400 },
+};
+
+// Fragment colours for each kind of ship when it blows, taken off its sprite.
+const DEBRIS = {
+  bee: ['#f4d03f', '#3060d0', '#ffffff'],
+  butterfly: ['#e02020', '#ffffff', '#3060d0'],
+  boss: ['#38b24a', '#c040c0', '#f4d03f', '#3060d0'],
+  player: ['#ffffff', '#e02020', '#40d0e0', '#ffe070'],
 };
 
 const EXTRA_LIFE_FIRST = 20000;
@@ -178,13 +186,14 @@ export class Game {
     this.formT = 0;
     this.diveTimer = 3.0;
     this.pendingDives = [];
+    this.breath = 0;
 
     if (isChallenge(this.stage)) {
       // 40 enemies stream through in eight groups of five and never stop.
       let delay = 0.6;
       for (let g = 0; g < 8; g++) {
         const type = g < 2 ? 'bee' : g < 6 ? 'butterfly' : 'boss';
-        const pts = challengePath(g);
+        const pts = challengePath(g, Math.floor(this.stage / 4));
         for (let i = 0; i < 5; i++) {
           const e = new Enemy(type, 0, 0);
           e.hp = 1; // challenge bosses die in one hit
@@ -344,6 +353,10 @@ export class Game {
     }
 
     this.formT += dt;
+    // Once the whole stage has flown in, the formation starts to breathe —
+    // eased in, because anything sitting in a slot snaps to wherever it is.
+    const assembled = !this.entryQueue.length && !this.enemies.some((e) => e.state === 'entry');
+    this.breath += ((assembled ? 1 : 0) - this.breath) * Math.min(1, dt * 1.2);
     this.updatePlayer(dt);
     for (const e of this.enemies) this.updateEnemy(e, dt);
     this.updateDirector(dt);
@@ -376,7 +389,10 @@ export class Game {
 
     if (!p.alive) {
       p.respawnT -= dt;
-      if (p.respawnT <= 0 && this.lives > 0 && this.state !== 'gameover') {
+      // The new ship waits for the dives already under way to play out, so it
+      // is never born into one. The cap is there in case one never does.
+      const clear = p.respawnT < -6 || !this.enemies.some((e) => e.state === 'dive' || e.state === 'beam');
+      if (p.respawnT <= 0 && clear && this.lives > 0 && this.state !== 'gameover') {
         p.alive = true;
         p.x = W / 2;
         p.invuln = 1.4;
@@ -426,14 +442,25 @@ export class Game {
     sfx.shoot();
   }
 
-  killPlayer() {
+  /** @param hitX where the hit landed, which decides which half of a dual fighter goes. */
+  killPlayer(hitX = this.player.x) {
     const p = this.player;
     if (!p.alive || p.invuln > 0) return;
+    if (p.dual) {
+      // The arcade rule: a hit on a dual fighter costs only the half that was
+      // hit, not a life. The survivor carries on from where it was flying.
+      const side = hitX < p.x ? -1 : 1;
+      this.explosions.push(this.blast(p.x + side * 8, PLAYER_Y, 'player', 0.7));
+      p.dual = false;
+      p.x -= side * 8;
+      p.invuln = 0.5; // so the same volley cannot take the second one too
+      sfx.playerDie();
+      return;
+    }
     p.alive = false;
-    p.dual = false;
     p.respawnT = 2.0;
     this.lives -= 1;
-    this.explosions.push({ x: p.x, y: PLAYER_Y, t: 0, dur: 0.7, big: true });
+    this.explosions.push(this.blast(p.x, PLAYER_Y, 'player', 0.7));
     sfx.playerDie();
     if (this.lives <= 0) {
       this.gameOver();
@@ -464,14 +491,20 @@ export class Game {
 
   // --- enemies ------------------------------------------------------------
 
+  /** How far the formation has opened out on its breath: 0 closed, 1 open. */
+  breathOpen() {
+    return this.breath * (1 - Math.cos(this.formT * 1.7)) * 0.5;
+  }
+
   slotX(col) {
     const aliveRatio = this.enemies.length / Math.max(1, this.stageTotal);
     const amp = 5 + (1 - aliveRatio) * 9;
-    return W / 2 + (col - 4.5) * COL_W + Math.sin(this.formT * 1.15) * amp;
+    const spread = 1 + this.breathOpen() * 0.16;
+    return W / 2 + (col - 4.5) * COL_W * spread + Math.sin(this.formT * 1.15) * amp;
   }
 
   slotY(row) {
-    return FORM_TOP + row * ROW_H;
+    return FORM_TOP + row * ROW_H * (1 + this.breathOpen() * 0.2);
   }
 
   advance(e, dt) {
@@ -509,6 +542,11 @@ export class Game {
       case 'entry':
       case 'return': {
         if (this.advance(e, dt)) e.state = 'toslot';
+        // From stage 2 the incoming flights take the odd shot on their way in,
+        // as the arcade ones do — but only from high up, never point-blank.
+        if (e.state === 'entry' && this.stage >= 2 && e.y > 30 && e.y < 160) {
+          this.maybeShoot(e, dt, 0.35);
+        }
         break;
       }
 
@@ -573,7 +611,8 @@ export class Game {
     }
   }
 
-  maybeShoot(e, dt) {
+  /** @param chance scales the odds of a shot, for flights that fire sparingly. */
+  maybeShoot(e, dt, chance = 1) {
     if (isChallenge(this.stage)) return;
     if (!this.player.alive) return;
     e.fireCd -= dt;
@@ -581,7 +620,7 @@ export class Game {
     e.fireCd = 0.6 + Math.random() * 1.0;
     // Only shoot on the way down, and ease off in the opening stages.
     if (e.y > PLAYER_Y - 40) return;
-    if (Math.random() > Math.min(0.5, 0.22 + this.stage * 0.04)) return;
+    if (Math.random() > Math.min(0.5, 0.22 + this.stage * 0.04) * chance) return;
     const speed = 100 + this.stage * 3;
     const dx = this.player.x - e.x;
     const dy = PLAYER_Y - e.y;
@@ -667,13 +706,16 @@ export class Game {
     if (isChallenge(this.stage)) return;
     if (this.entryQueue.length) return;
     if (this.state !== 'play') return;
+    // Nobody attacks an empty sky: with no ship to aim at, the director waits,
+    // which is also what lets the dives in flight clear before a respawn.
+    if (!this.player.alive) return;
 
     // Escorts launch a beat after their leader; they wait in this queue so a
     // pause or a stage change can't strand them.
     for (const job of this.pendingDives) job.at -= dt;
     for (const job of this.pendingDives) {
       if (job.at <= 0 && !job.enemy.dead && job.enemy.state === 'form') {
-        this.startDive(job.enemy, job.dir);
+        this.startDive(job.enemy, job.dir, job.lead);
       }
     }
     this.pendingDives = this.pendingDives.filter((job) => job.at > 0 && !job.enemy.dead);
@@ -706,30 +748,42 @@ export class Game {
 
     const leader = inForm[(Math.random() * inForm.length) | 0];
     const dir = leader.x < W / 2 ? -1 : 1;
-    this.launchDive(leader, dir, 0);
+    // Aimed at where you are now, give or take — so standing still is not safe,
+    // and moving is what makes it miss.
+    const aimX = this.player.x + (Math.random() * 2 - 1) * 18;
+    // Bees loop in front of you more often as the stages go on.
+    const loop = leader.type === 'bee' && Math.random() < Math.min(0.55, 0.15 + this.stage * 0.05);
+    const lead = attackPath(leader.type, leader.x, leader.y, dir, aimX, PLAYER_Y, { loop });
+    this.startDive(leader, dir, lead);
 
+    // Followers fly the leader's own line from their own slot, a beat behind,
+    // so a boss and its escorts come down as one V rather than three dives.
     if (leader.type === 'boss') {
       // Bosses bring butterfly escorts from the columns beside them.
       const escorts = inForm
         .filter((e) => e.type === 'butterfly' && Math.abs(e.col - leader.col) <= 1)
         .slice(0, 2);
       leader.escorts = escorts;
-      escorts.forEach((e, i) => this.launchDive(e, dir, 0.18 * (i + 1)));
+      escorts.forEach((e, i) => this.launchDive(e, dir, 0.18 * (i + 1), lead));
     } else if (Math.random() < 0.45) {
       const mate = inForm.find((e) => e !== leader && e.type === leader.type && e.row === leader.row);
-      if (mate) this.launchDive(mate, dir, 0.2);
+      if (mate) this.launchDive(mate, dir, 0.2, lead);
     }
     sfx.dive();
   }
 
-  launchDive(e, dir, delay) {
-    if (delay > 0) this.pendingDives.push({ enemy: e, dir, at: delay });
-    else this.startDive(e, dir);
+  launchDive(e, dir, delay, lead) {
+    if (delay > 0) this.pendingDives.push({ enemy: e, dir, at: delay, lead });
+    else this.startDive(e, dir, lead);
   }
 
-  startDive(e, dir) {
+  /** @param lead the leader's path, flown from this enemy's own slot. */
+  startDive(e, dir, lead) {
     if (e.dead || e.state !== 'form') return;
-    e.follow(divePath(e.x, e.y, dir), 'dive', 118 + this.stage * 2);
+    const pts = lead
+      ? offsetPath(lead, e.x, e.y)
+      : attackPath(e.type, e.x, e.y, dir, this.player.x, PLAYER_Y);
+    e.follow(pts, 'dive', 118 + this.stage * 2);
     e.fireCd = 0.3 + Math.random() * 0.5;
   }
 
@@ -759,7 +813,7 @@ export class Game {
     for (const b of this.enemyBullets) {
       if (overlap(b.x, b.y, 2, 5, p.x, PLAYER_Y, halfW, 12)) {
         b.gone = true;
-        this.killPlayer();
+        this.killPlayer(b.x);
         break;
       }
     }
@@ -772,7 +826,7 @@ export class Game {
       const s = e.size;
       if (overlap(e.x, e.y, s.w - 3, s.h - 2, p.x, PLAYER_Y, halfW - 3, 10)) {
         this.hitEnemy(e);
-        this.killPlayer();
+        this.killPlayer(e.x);
         break;
       }
     }
@@ -784,13 +838,13 @@ export class Game {
 
     if (e.type === 'boss' && e.hp > 1 && !isChallenge(this.stage)) {
       e.hp -= 1;
-      this.explosions.push({ x: e.x, y: e.y, t: 0, dur: 0.18, big: false, spark: true });
-      sfx.killSmall();
+      this.explosions.push({ ...this.blast(e.x, e.y, e.type, 0.18), big: false, spark: true });
+      sfx.bossHit();
       return;
     }
 
     e.dead = true;
-    this.explosions.push({ x: e.x, y: e.y, t: 0, dur: e.type === 'boss' ? 0.45 : 0.3, big: e.type === 'boss' });
+    this.explosions.push(this.blast(e.x, e.y, e.type, e.type === 'boss' ? 0.45 : 0.3));
 
     if (isChallenge(this.stage)) {
       this.challengeHits += 1;
@@ -826,6 +880,15 @@ export class Game {
       e.captive = false;
       if (this.captive && this.captive.boss === e) this.captive = null;
     }
+  }
+
+  /**
+   * An explosion record. `type` is who blew up, so both renderers can throw
+   * debris in that ship's colours; `seed` makes the flat view's debris the same
+   * shape every frame without storing the fragments.
+   */
+  blast(x, y, type, dur) {
+    return { x, y, t: 0, dur, big: type === 'boss' || type === 'player', type, seed: Math.random() };
   }
 
   floatScore(x, y, value) {
@@ -1012,6 +1075,7 @@ export class Game {
         continue;
       }
       const f = x.t / x.dur;
+      if (!x.spark && x.type) this.drawDebris(c, x, f);
       const r = (x.big ? 16 : 10) * (0.3 + f);
       const rings = x.spark ? 1 : 4;
       for (let i = 0; i < rings; i++) {
@@ -1023,6 +1087,24 @@ export class Game {
         c.stroke();
       }
     }
+  }
+
+  /** Pixel fragments in the dead ship's own colours, flung out and fading. */
+  drawDebris(c, x, f) {
+    const colours = DEBRIS[x.type] || DEBRIS.bee;
+    const n = x.big ? 14 : 9;
+    const reach = (x.big ? 22 : 15) * (1 - (1 - f) * (1 - f)); // eases out
+    c.globalAlpha = 1 - f * f;
+    for (let i = 0; i < n; i++) {
+      // Cheap hash of the seed, so each fragment keeps its own line of flight.
+      const h = Math.sin((x.seed * 1000 + i) * 12.9898) * 43758.5453;
+      const r = h - Math.floor(h);
+      const a = (i / n) * Math.PI * 2 + r * 0.9;
+      const d = reach * (0.45 + r * 0.55);
+      c.fillStyle = colours[i % colours.length];
+      c.fillRect(Math.round(x.x + Math.cos(a) * d), Math.round(x.y + Math.sin(a) * d), r > 0.7 ? 2 : 1, 1 + (i & 1));
+    }
+    c.globalAlpha = 1;
   }
 
   drawHud(c) {
@@ -1068,6 +1150,11 @@ export class Game {
   }
 
   drawBanner(c) {
+    // A new ship is due but is waiting for the sky to clear.
+    const p = this.player;
+    if (!this.banner && p && !p.alive && p.respawnT < 1.2 && this.lives > 0 && this.state !== 'gameover') {
+      drawText(c, 'READY', W / 2, 140, '#ff4040', 'center');
+    }
     if (!this.banner) return;
     const b = this.banner;
     // Blink out over the last half second.

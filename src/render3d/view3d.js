@@ -40,6 +40,7 @@ import { buildViper } from './viper.js';
 import { buildCockpit } from './cockpit.js';
 import { makeEnemy, makeFighter, makeTracer, makeBlast, makeBeam, setBossDamaged, PAL } from './models.js';
 import { starTexture, starFlareTexture } from './textures.js';
+import { buildParticles } from './particles.js';
 
 const PLAYER_Y = 258; // must match game.js — the arcade row the ship flies on
 
@@ -48,14 +49,68 @@ const PLAYER_Y = 258; // must match game.js — the arcade row the ship flies on
 const XS = 0.085; // world units per arcade pixel, across
 
 const ELEV = 0.72; // radians of elevation at the top of the playfield
-const DNEAR = 0.6; // distance of the player's own row
-const DFAR = 22; // distance of the top of the playfield
-const PITCH = 0.26; // radians the whole rig looks up by, to clear the panel
+// The player's own row sits a ship's length ahead of the eye rather than on
+// top of it. At the old 0.6 the near end of a corridor nineteen units wide was
+// closer than the canopy rail, so a shot two units off your beam sat seventy
+// degrees off the boresight — behind your own head, for all the good it did.
+const DNEAR = 1.15; // distance of the player's own row
+// Pulled in with the wider cone. Angular size is what the player actually
+// reads, and doubling the field of view halves it — at the old 22 the whole
+// formation came out a third of the frame across, small enough that picking a
+// target off it was guesswork.
+const DFAR = 15; // distance of the top of the playfield
+// The rig looks up so the playfield clears the panel. It looks up less than it
+// used to: the frame below the boresight is much taller now, and the sky above
+// the formation is empty, so tilting the cone up only wasted it.
+const PITCH = 0.15; // radians the whole rig looks up by, to clear the panel
+
+// --- The visible cone -------------------------------------------------------
+// The one number that matters for playing the game is how far round the sides
+// you can see, so that is the one that is held fixed. The stage is a 224x288
+// portrait frame, and a camera set by its *vertical* angle on a frame that
+// shape throws most of the field of view away upwards: the old 78-degree
+// vertical came out at barely 64 degrees across, which is narrower than a pair
+// of eyes and much narrower than the ship needs. Anything abeam of you — the
+// shots you are trying to slip between — was simply not drawn.
+//
+// So the horizontal angle is the input and the vertical falls out of the
+// aspect. A perspective camera cannot reach a true 180: the projection runs
+// off to infinity at 90 degrees either side, and the stretch near the edge is
+// already the limit of what reads as a cockpit rather than a funhouse mirror.
+// This is about as wide as a rectilinear view goes while the formation is
+// still worth shooting at.
+const HFOV = 112 * (Math.PI / 180); // horizontal field of view
+const VFOV_MAX = 140 * (Math.PI / 180); // guard, so a freak aspect can't blow up
+
+// The chase view keeps the old lens. Nothing out there is hidden from it — the
+// ship and its wingman are the subject and they are in the middle of the frame
+// — so widening it would only shrink the airframe you swapped views to look at.
+const CHASE_FOV = 78;
+
+/** Vertical FOV, in degrees, that gives HFOV across a frame of this aspect. */
+function cockpitFov(aspect) {
+  const v = 2 * Math.atan(Math.tan(HFOV / 2) / aspect);
+  return Math.min(v, VFOV_MAX) * (180 / Math.PI);
+}
+
+/** Half-angles of a cone, which is what the canopy is built against. */
+function coneOf(fovDeg, aspect) {
+  const vHalf = (fovDeg * Math.PI) / 360;
+  return { vHalf, hHalf: Math.atan(Math.tan(vHalf) * aspect) };
+}
 
 // Chase view. The eye leaves the canopy and sits behind and above the tail;
 // with no panel eating the bottom of the frame it need not look up as steeply.
+// The station is close in — the Viper fills about three quarters of the frame
+// width, near enough to read the airframe rather than a model of one — and
+// holds the same 18-degree look-down onto its spine that a longer lens had.
 const CHASE_PITCH = 0.25;
-const CHASE_EYE = [0, 0.95, 4.00]; // eye station, in the rig's own frame
+const CHASE_EYE = [0, 0.46, 2.53]; // eye station, in the rig's own frame
+// Doubled up, the pair is twice the width of one airframe and runs off both
+// sides of the frame from the station above, so the eye has a second station
+// further back along the same line, where the pair frames as the single ship
+// does. Same look-down angle, so it is a dolly and not a new camera.
+const CHASE_EYE_DUAL = [0, 0.90, 3.85];
 
 // The airframe, in the rig's frame. Set so the nose lands just past the arcade
 // row the ship flies on, which is where its shots are born — otherwise they
@@ -75,6 +130,19 @@ const distanceOf = (y) => DNEAR + (DFAR - DNEAR) * upOf(y);
 const lateralOf = (x) => (x - W / 2) * XS;
 
 const TMP = new THREE.Vector3();
+const FWD = new THREE.Vector3();
+
+// Debris for each kind of ship, off the same palette the models are built from.
+const DEBRIS = {
+  bee: [PAL.Y, PAL.Y, PAL.B, PAL.W],
+  butterfly: [PAL.R, PAL.W, PAL.R, PAL.B],
+  boss: [PAL.G, PAL.P, PAL.G, PAL.Y],
+  player: [PAL.W, PAL.R, PAL.C, 0xffe070],
+};
+// Exhaust behind anything on an attack run. Formation and slot-seeking craft
+// leave none, so a trail on screen always means something is coming.
+const EXHAUST = { bee: 0xffc040, butterfly: 0xff5040, boss: 0xd060ff };
+const TRAILING = new Set(['dive', 'beam', 'entry', 'return', 'flyby']);
 
 /**
  * The player's Viper, scaled to the arcade fighter and turned to face down the
@@ -176,7 +244,8 @@ export class View3D {
 
     this.scene = new THREE.Scene();
 
-    this.camera = new THREE.PerspectiveCamera(78, 1, 0.05, 2000);
+    const aspect = W / H; // the stage is always the arcade frame's shape
+    this.camera = new THREE.PerspectiveCamera(cockpitFov(aspect), aspect, 0.05, 2000);
 
     // The rig is the airframe: it slides with the ship and looks up by PITCH so
     // the playfield sits above the panel.
@@ -193,7 +262,7 @@ export class View3D {
     this.eyeRig.add(this.camera);
     this.rig.add(this.eyeRig);
 
-    this.cockpit = buildCockpit();
+    this.cockpit = buildCockpit(coneOf(cockpitFov(aspect), aspect));
     this.eyeRig.add(this.cockpit.group);
 
     // The airframe itself, seen only from outside. The second one is the dual
@@ -203,6 +272,7 @@ export class View3D {
     this.rig.add(this.ship.group);
     this.shipDual = null;
     this.chase = false;
+    this.chaseBack = 0; // 0 at the single-ship station, 1 at the doubled one
     this.ship.group.visible = false;
 
     // Everything the simulation owns lives in the field. It has no transform of
@@ -225,8 +295,8 @@ export class View3D {
     // A lamp inside the cockpit, parented to the rig so it slides along. Kept
     // weak: the panel is meant to be a dark shape you read instruments off,
     // not a lit surface competing with the ships outside.
-    const panelLight = new THREE.PointLight(0x88a0d8, 1.1, 3.5, 2);
-    panelLight.position.set(0, -0.10, -0.55);
+    const panelLight = new THREE.PointLight(0x88a0d8, 2.2, 5.0, 2);
+    panelLight.position.set(0, -0.05, -0.35);
     this.eyeRig.add(panelLight);
     this.panelLight = panelLight;
 
@@ -268,6 +338,9 @@ export class View3D {
     this.wingman.visible = false;
     this.field.add(this.wingman);
 
+    this.particles = buildParticles(this.field);
+    this.burst = new WeakSet(); // explosions that have already thrown their debris
+
     if (bloom) {
       this.composer = new EffectComposer(this.renderer);
       this.composer.addPass(new RenderPass(this.scene, this.camera));
@@ -306,9 +379,20 @@ export class View3D {
     this.cockpit.group.visible = !this.chase;
     this.panelLight.visible = !this.chase;
     this.shipKey.visible = this.chase;
-    if (this.chase) this.eyeRig.position.fromArray(CHASE_EYE);
+    if (this.chase) this.placeChaseEye();
     else this.eyeRig.position.set(0, 0, 0);
+    this.applyLens();
     return this.chase;
+  }
+
+  /** The chase eye, somewhere on the line between its two stations. */
+  placeChaseEye() {
+    const k = this.chaseBack;
+    this.eyeRig.position.set(
+      CHASE_EYE[0] + (CHASE_EYE_DUAL[0] - CHASE_EYE[0]) * k,
+      CHASE_EYE[1] + (CHASE_EYE_DUAL[1] - CHASE_EYE[1]) * k,
+      CHASE_EYE[2] + (CHASE_EYE_DUAL[2] - CHASE_EYE[2]) * k,
+    );
   }
 
   /** CSS pixel size of the view. Called by the same resize pass as the 2D canvas. */
@@ -322,25 +406,38 @@ export class View3D {
     this.composer?.setPixelRatio(dpr);
     this.composer?.setSize(w, h);
     this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    this.applyLens();
   }
 
   /**
-   * Screen offset, in HUD canvas pixels, of a world point. The HUD plane is
-   * 1.30 wide at 0.92 ahead of the eye, so its half-angle is fixed; scaling NDC
-   * by the ratio of the camera's half-angle to the HUD's puts a projected point
-   * on the right bit of glass.
+   * Point the camera's lens at whichever view is running, and re-lay the canopy
+   * out against the cockpit's cone.
+   *
+   * For the cockpit the horizontal angle is the invariant and the vertical is
+   * whatever the stage's shape makes it — the whole point of the wide view is
+   * how far round the sides it reaches, and a camera set by its vertical angle
+   * on a portrait frame gives that away. The canopy is re-laid-out to match, or
+   * its pillars would sit adrift inside the frame.
+   */
+  applyLens() {
+    const aspect = this.camera.aspect;
+    this.camera.fov = this.chase ? CHASE_FOV : cockpitFov(aspect);
+    this.camera.updateProjectionMatrix();
+    const cone = coneOf(cockpitFov(aspect), aspect);
+    this.cockpit.setFrame(cone.hHalf, cone.vHalf);
+  }
+
+  /**
+   * Screen offset, in HUD canvas pixels, of a world point. The glass now spans
+   * the whole frame, so normalised device coordinates *are* HUD coordinates
+   * once scaled by the canvas half-size — which is what lets a lock box stay
+   * on a threat right out to the peripheral glass instead of falling off the
+   * edge of a small plane hung in the middle of the windscreen.
    */
   hudOffset(world) {
     const ndc = world.clone().project(this.camera);
     if (ndc.z > 1) return null; // behind the eye — there is no glass for it
-    const tanV = Math.tan((this.camera.fov * Math.PI) / 360);
-    const tanH = tanV * this.camera.aspect;
-    const hudTan = 0.65 / 0.92;
-    return {
-      sx: ndc.x * (tanH / hudTan) * 256,
-      sy: -ndc.y * (tanV / hudTan) * 256,
-    };
+    return { sx: ndc.x * W, sy: -ndc.y * H };
   }
 
   /** Place a mesh at an arcade point. */
@@ -364,6 +461,7 @@ export class View3D {
 
   draw(game, dt) {
     this.time += dt;
+    this.frameDt = dt;
 
     const p = game.player;
     const playerX = p ? p.x : W / 2;
@@ -377,6 +475,18 @@ export class View3D {
     // strip pins the stick and a nudge on the arrow keys leans it.
     const target = Math.max(-1, Math.min(1, moved / 200));
     this.lateral += (target - this.lateral) * Math.min(1, dt * 14);
+
+    // Give way when the fighter doubles, so the pair fills the frame the way
+    // one airframe does. Eased while you are watching, but snapped while the
+    // eye is in the canopy, so swapping to the chase view already doubled
+    // arrives at the right station instead of dollying back once you get there.
+    const wantBack = p && p.dual ? 1 : 0;
+    if (this.chase) {
+      this.chaseBack += (wantBack - this.chaseBack) * Math.min(1, dt * 5);
+      this.placeChaseEye();
+    } else {
+      this.chaseBack = wantBack;
+    }
 
     // Camera shake when you lose a ship.
     if (this.prevLives != null && game.lives != null && game.lives < this.prevLives) {
@@ -411,6 +521,7 @@ export class View3D {
     this.syncFriendlies(game);
 
     this.cockpit.update(dt, this.cockpitState(game, dt));
+    if (!game.paused) this.particles.update(dt);
 
     if (this.composer) this.composer.render(dt);
     else this.renderer.render(this.scene, this.camera);
@@ -458,6 +569,9 @@ export class View3D {
   }
 
   syncEnemies(game) {
+    // One puff per enemy per 60th of a second whatever the display rate, and
+    // none at all while paused, or every craft would sit in a growing blob.
+    this.emitting = !game.paused && Math.random() < Math.min(1, this.frameDt * 60);
     const pool = this.enemyPool;
     const beams = this.beamPool;
     pool.begin();
@@ -477,6 +591,14 @@ export class View3D {
       mesh.scale.set(base * flap, base, base);
 
       if (e.type === 'boss') setBossDamaged(mesh, e.hp < 2);
+
+      if (this.emitting && TRAILING.has(e.state) && !(e.state === 'beam' && !e.path)) {
+        // Out of the tail, not the middle: the craft is aimed nose-first along
+        // its heading, so behind it is back along that same line.
+        mesh.getWorldDirection(FWD);
+        TMP.copy(mesh.position).addScaledVector(FWD, -0.45 * base);
+        this.particles.trail(TMP, EXHAUST[e.type], { gain: e.state === 'dive' ? 0.75 : 0.4 });
+      }
 
       if (e.state === 'beam' && !e.path) {
         const { top, length, halfWidth, k } = game.beamShape(e);
@@ -528,6 +650,9 @@ export class View3D {
       const m = this.enemyShotPool.get(b);
       const k = 8 / (Math.hypot(b.vx, b.vy) || 1);
       this.aim(m, b.x, b.y, b.x + b.vx * k, b.y + b.vy * k);
+      // A hot tail, so incoming fire reads against the stars. The tracer alone
+      // is a few pixels long by the time it is far enough away to dodge.
+      if (this.emitting) this.particles.trail(m.position, 0xffb040, { lifetime: 0.22, gain: 1.1, jitter: 0.02 });
     }
     this.enemyShotPool.end();
   }
@@ -546,6 +671,20 @@ export class View3D {
         this.place(s, x.x, x.y - f * 8);
         s.scale.set(1.1, 0.55, 1);
         continue;
+      }
+      if (x.type && !this.burst.has(x)) {
+        this.burst.add(x);
+        const at = worldOf(x.x, x.y, TMP);
+        const colours = DEBRIS[x.type] || DEBRIS.bee;
+        if (x.spark) {
+          this.particles.burst(at, colours, { count: 10, speed: 2.4, lifetime: 0.4 });
+        } else {
+          this.particles.burst(at, colours, x.big ? { count: 80, speed: 5.5, lifetime: 1.2 } : {});
+          // A kick you can feel for the big ones: a boss going up nearby, and
+          // hardest of all, your own ship.
+          if (x.type === 'player') this.shake = 1;
+          else if (x.type === 'boss') this.shake = Math.max(this.shake, 0.45);
+        }
       }
       const pool = x.spark ? this.sparkPool : this.blastPool;
       const s = pool.get(x);
@@ -633,6 +772,10 @@ export class View3D {
     return {
       time: this.time,
       lateral: this.lateral,
+      // Degrees below the boresight that the ship's own row sits at, so the
+      // HUD can mark the altitude abeam traffic arrives on without having to
+      // know how the rig is pitched.
+      horizon: PITCH * (180 / Math.PI),
       firing,
       flying: game.state !== 'title',
       contacts,
