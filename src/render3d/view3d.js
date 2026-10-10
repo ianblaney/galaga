@@ -66,12 +66,13 @@ const PITCH = 0.15; // radians the whole rig looks up by, to clear the panel
 
 // --- The visible cone -------------------------------------------------------
 // The one number that matters for playing the game is how far round the sides
-// you can see, so that is the one that is held fixed. The stage is a 224x288
-// portrait frame, and a camera set by its *vertical* angle on a frame that
-// shape throws most of the field of view away upwards: the old 78-degree
-// vertical came out at barely 64 degrees across, which is narrower than a pair
-// of eyes and much narrower than the ship needs. Anything abeam of you — the
-// shots you are trying to slip between — was simply not drawn.
+// you can see, so that is the one that is held fixed. The view fills the
+// screen, which on a phone is a tall portrait frame, and a camera set by its
+// *vertical* angle on a frame that shape throws most of the field of view away
+// upwards: the old 78-degree vertical came out at barely 64 degrees across on
+// the cabinet's own 224x288, which is narrower than a pair of eyes and much
+// narrower than the ship needs. Anything abeam of you — the shots you are
+// trying to slip between — was simply not drawn.
 //
 // So the horizontal angle is the input and the vertical falls out of the
 // aspect. A perspective camera cannot reach a true 180: the projection runs
@@ -81,17 +82,38 @@ const PITCH = 0.15; // radians the whole rig looks up by, to clear the panel
 // still worth shooting at.
 const HFOV = 112 * (Math.PI / 180); // horizontal field of view
 const VFOV_MAX = 140 * (Math.PI / 180); // guard, so a freak aspect can't blow up
+// The other way round, a landscape screen held to 112 across is barely 70 high,
+// and that crops the control column off the bottom — which on a phone is the
+// thing your thumb is on. So the vertical has a floor too, and on a wide frame
+// it is the horizontal that gives way.
+const VFOV_MIN = 80 * (Math.PI / 180);
 
 // The chase view keeps the old lens. Nothing out there is hidden from it — the
 // ship and its wingman are the subject and they are in the middle of the frame
 // — so widening it would only shrink the airframe you swapped views to look at.
+// It was set on the cabinet's 224x288 frame, though, and a full-screen phone
+// is much taller and narrower than that: 78 degrees high there is barely 40
+// across, and the wings run off both sides. So it never goes narrower than the
+// cabinet frame was, and a tall screen gets more sky instead.
 const CHASE_FOV = 78;
+const CHASE_HFOV = 2 * Math.atan(Math.tan((CHASE_FOV * Math.PI) / 360) * (W / H));
+
+/** Vertical FOV, in degrees, for the chase view on a frame of this aspect. */
+function chaseFov(aspect) {
+  const v = 2 * Math.atan(Math.tan(CHASE_HFOV / 2) / aspect);
+  return Math.min(Math.max(v * (180 / Math.PI), CHASE_FOV), VFOV_MAX * (180 / Math.PI));
+}
 
 /** Vertical FOV, in degrees, that gives HFOV across a frame of this aspect. */
 function cockpitFov(aspect) {
   const v = 2 * Math.atan(Math.tan(HFOV / 2) / aspect);
-  return Math.min(v, VFOV_MAX) * (180 / Math.PI);
+  return Math.min(Math.max(v, VFOV_MIN), VFOV_MAX) * (180 / Math.PI);
 }
+
+// Full screen is a lot of pixels to bloom. The buffer is held to about what the
+// old cabinet frame cost at 3x, so a big desktop window does not cost four
+// times what it used to for a picture nobody can tell apart.
+const MAX_PIXELS = 2.4e6;
 
 /** Half-angles of a cone, which is what the canopy is built against. */
 function coneOf(fovDeg, aspect) {
@@ -244,7 +266,7 @@ export class View3D {
 
     this.scene = new THREE.Scene();
 
-    const aspect = W / H; // the stage is always the arcade frame's shape
+    const aspect = W / H; // until the first setSize says what the screen is
     this.camera = new THREE.PerspectiveCamera(cockpitFov(aspect), aspect, 0.05, 2000);
 
     // The rig is the airframe: it slides with the ship and looks up by PITCH so
@@ -357,6 +379,7 @@ export class View3D {
     this.prevLives = null;
     this.prevShots = 0;
     this.lateral = 0;
+    this.stickHeld = null;
     this.prevPlayerX = W / 2;
   }
 
@@ -395,12 +418,19 @@ export class View3D {
     );
   }
 
-  /** CSS pixel size of the view. Called by the same resize pass as the 2D canvas. */
+  /** CSS pixel size of the view. Called by the same layout pass as the 2D canvas. */
   setSize(w, h) {
     // Phones get a lower cap: the bloom pass costs real time at 3x on a small
-    // GPU, and at this canvas size the difference is not visible anyway.
+    // GPU, and at this canvas size the difference is not visible anyway. Never
+    // below 1, though — under that the HUD's line art goes soft.
     const coarse = window.matchMedia?.('(pointer: coarse)').matches;
-    const dpr = Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2);
+    const budget = Math.max(1, Math.sqrt(MAX_PIXELS / Math.max(1, w * h)));
+    const dpr = Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2, budget);
+    // Layout runs on every resize event and view swap; reallocating the bloom
+    // targets for a size that has not changed is a visible hitch.
+    const key = `${w}x${h}@${dpr}`;
+    if (key === this.sizeKey) return;
+    this.sizeKey = key;
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h, false);
     this.composer?.setPixelRatio(dpr);
@@ -421,23 +451,46 @@ export class View3D {
    */
   applyLens() {
     const aspect = this.camera.aspect;
-    this.camera.fov = this.chase ? CHASE_FOV : cockpitFov(aspect);
+    this.camera.fov = this.chase ? chaseFov(aspect) : cockpitFov(aspect);
     this.camera.updateProjectionMatrix();
     const cone = coneOf(cockpitFov(aspect), aspect);
     this.cockpit.setFrame(cone.hHalf, cone.vHalf);
   }
 
   /**
-   * Screen offset, in HUD canvas pixels, of a world point. The glass now spans
-   * the whole frame, so normalised device coordinates *are* HUD coordinates
-   * once scaled by the canvas half-size — which is what lets a lock box stay
-   * on a threat right out to the peripheral glass instead of falling off the
-   * edge of a small plane hung in the middle of the windscreen.
+   * Where a world point lands on the glass, in normalised device coordinates.
+   * The glass spans the whole frame, so these *are* HUD coordinates once the
+   * cockpit scales them by its canvas — which is what lets a lock box stay on a
+   * threat right out to the peripheral glass instead of falling off the edge
+   * of a small plane hung in the middle of the windscreen.
    */
   hudOffset(world) {
     const ndc = world.clone().project(this.camera);
     if (ndc.z > 1) return null; // behind the eye — there is no glass for it
-    return { sx: ndc.x * W, sy: -ndc.y * H };
+    return { nx: ndc.x, ny: ndc.y };
+  }
+
+  /**
+   * Where the control column sits on screen, in normalised device coordinates,
+   * so the page can put the touch ring over it. The cockpit is built in the
+   * camera's own frame, so the column never moves on screen and this only
+   * changes when the screen does. Worked out from the cockpit's lens rather
+   * than the camera's, so it is the same answer whichever view is on.
+   */
+  stickOnScreen() {
+    const aspect = this.camera.aspect;
+    const t = Math.tan((cockpitFov(aspect) * Math.PI) / 360);
+    const ndc = (p) => ({ x: p.x / -p.z / (t * aspect), y: p.y / -p.z / t });
+    return { grip: ndc(this.cockpit.stick.grip), base: ndc(this.cockpit.stick.base) };
+  }
+
+  /**
+   * Hold the stick where a thumb has it, -1..1, or null to let it go back to
+   * reading the ship's motion. Held, it follows the thumb even when the ship
+   * cannot — pushed into the wall, the stick stays over.
+   */
+  setStick(v) {
+    this.stickHeld = v;
   }
 
   /** Place a mesh at an arcade point. */
@@ -466,13 +519,14 @@ export class View3D {
     const p = game.player;
     const playerX = p ? p.x : W / 2;
 
-    // Steering signal for the stick. Taken from how the ship actually moved, so
-    // it works identically for the slide strip, the arrow keys, and the
-    // headless bot — nothing has to tell the cockpit which input is in use.
+    // Steering signal for the bank, and for the stick when no thumb is on it.
+    // Taken from how the ship actually moved, so it works identically for the
+    // touch stick, the arrow keys, and the headless bot — nothing has to tell
+    // the cockpit which input is in use.
     const moved = (playerX - this.prevPlayerX) / Math.max(dt, 1e-4);
     this.prevPlayerX = playerX;
-    // 200px/s is roughly what a hard slide asks for, so a flick across the
-    // strip pins the stick and a nudge on the arrow keys leans it.
+    // 200px/s is about full stick, so a hard push pins it and a nudge on the
+    // arrow keys leans it.
     const target = Math.max(-1, Math.min(1, moved / 200));
     this.lateral += (target - this.lateral) * Math.min(1, dt * 14);
 
@@ -759,7 +813,7 @@ export class View3D {
     let threatHud = null;
     if (threat) {
       const at = this.hudOffset(worldOf(threat.x, threat.y, TMP));
-      if (at) threatHud = { sx: at.sx, sy: at.sy, dist: threatDist };
+      if (at) threatHud = { nx: at.nx, ny: at.ny, dist: threatDist };
     }
 
     // `shots` only exists once a game is running, and NaN comparisons would
@@ -772,6 +826,7 @@ export class View3D {
     return {
       time: this.time,
       lateral: this.lateral,
+      stick: this.stickHeld ?? this.lateral,
       // Degrees below the boresight that the ship's own row sits at, so the
       // HUD can mark the altitude abeam traffic arrives on without having to
       // know how the rig is pitched.

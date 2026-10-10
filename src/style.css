@@ -20,29 +20,26 @@ html, body {
   touch-action: none;
 }
 
-#cabinet {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 10px;
-  padding-bottom: max(10px, env(safe-area-inset-bottom));
-  padding-left: max(10px, env(safe-area-inset-left));
-  padding-right: max(10px, env(safe-area-inset-right));
-}
-
-/* The bezel lives on the wrapper, so both canvases sit inside one frame. */
+/* The whole screen, notch and all. What has to stay clear of the notch and the
+   home indicator is kept inside the safe area by main.js. */
 #stage {
-  position: relative;
-  line-height: 0;
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
   background: #000;
-  border: 2px solid var(--bezel);
-  box-shadow: 0 0 60px rgba(60, 90, 200, 0.18);
 }
 
-/* The cockpit view, filling the frame behind the arcade HUD. */
+#safe {
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  right: env(safe-area-inset-right, 0px);
+  bottom: env(safe-area-inset-bottom, 0px);
+  left: env(safe-area-inset-left, 0px);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* The cockpit view, edge to edge. */
 #view3d {
   position: absolute;
   inset: 0;
@@ -51,147 +48,108 @@ html, body {
   display: block;
 }
 
-/* The canvas is 224x288 arcade pixels, scaled up by JS to fit the viewport. */
+body:not(.fps) #view3d { display: none; }
+
+/* The arcade canvas, placed and scaled by main.js. In cockpit mode it is the
+   HUD layer only, the shape of the screen, and lets the 3D view through. */
 #game {
-  position: relative;
+  position: absolute;
   display: block;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   background: #000;
-  transform-origin: center center;
 }
 
-/* In cockpit mode this canvas is the HUD layer only — let the 3D view through. */
-body.fps #game {
-  background: transparent;
+body.fps #game { background: transparent; }
+
+/* The flat view is still the cabinet, so it keeps its bezel. */
+body:not(.fps) #game {
+  outline: 2px solid var(--bezel);
+  box-shadow: 0 0 60px rgba(60, 90, 200, 0.18);
 }
 
 #legend {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: max(8px, env(safe-area-inset-bottom));
   margin: 0;
   font-size: 11px;
   letter-spacing: 0.08em;
   text-align: center;
+  pointer-events: none;
 }
 
 #legend b { color: #cfd2e6; }
 
-#touch {
-  display: flex;
-  gap: 10px;
-  width: 100%;
-  align-items: stretch;
-  justify-content: center;
-}
-
-#touch.hidden { display: none; }
-
-/* The slide strip. Full width and tall enough to land a thumb on without
-   looking, because your eyes belong on the playfield. */
-#pad {
-  position: relative;
-  flex: 1;
-  min-height: 84px;
-  border: 1px solid #2a2a3a;
-  border-radius: 14px;
-  background: linear-gradient(#15151f, #101018);
-  touch-action: none;
-  overflow: hidden;
-}
-
-#pad.active { border-color: #3a3a55; }
-
-/* A centre line, so the strip reads as a track rather than a button. */
-#pad-track {
-  position: absolute;
-  left: 14px;
-  right: 14px;
-  top: 50%;
-  height: 2px;
-  transform: translateY(-50%);
-  background: repeating-linear-gradient(
-    to right,
-    #23233a 0 6px,
-    transparent 6px 12px
-  );
-}
-
-#pad-knob {
-  position: absolute;
-  top: 50%;
+/* Over the cockpit it has a busy panel behind it rather than black. */
+body.fps #legend {
   left: 50%;
-  width: 56px;
-  height: 56px;
-  margin: -28px 0 0 -28px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 50% 38%, #3b3b5c, #1d1d2c);
-  border: 1px solid #4a4a6a;
-  box-shadow: 0 0 18px rgba(90, 120, 255, 0.25);
-  pointer-events: none;
-  /* Feedback is glow only — scaling the knob would push it past the travel
-     inset and clip it at the ends of the strip. */
-  transition: box-shadow 0.08s ease-out, border-color 0.08s ease-out;
-}
-
-#pad.active #pad-knob {
-  border-color: #7d7dbb;
-  background: radial-gradient(circle at 50% 38%, #4a4a75, #24243a);
-  box-shadow: 0 0 26px rgba(120, 150, 255, 0.5);
-}
-
-#pad-label {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 7px;
-  text-align: center;
-  font-size: 9px;
-  letter-spacing: 0.22em;
-  color: #45455e;
-  pointer-events: none;
-}
-
-#pad.active #pad-label { opacity: 0; }
-
-#touch-side {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  justify-content: center;
-}
-
-/* Pause and mute are deliberate, low-frequency taps: keep them off to the side
-   and small, so a flying thumb never catches one. */
-.tbtn {
-  border: 1px solid #2a2a3a;
+  right: auto;
+  transform: translateX(-50%);
+  width: max-content;
+  padding: 4px 12px;
   border-radius: 10px;
-  background: #14141c;
-  color: #cfd2e6;
-  font: inherit;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.hidden { display: none !important; }
+
+/* The stick. The element is the touch target; the ring drawn inside it is
+   smaller, so a thumb that lands just off the ring still has the stick. */
+#stick {
+  position: absolute;
+  z-index: 2;
+  border-radius: 50%;
   touch-action: none;
 }
 
-.tbtn:active { background: #23233a; }
-
-.tbtn.hidden { display: none; }
-
-.tbtn-sm {
-  width: 44px;
-  height: 38px;
-  font-size: 15px;
-  color: var(--ink);
+#stick::before {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(150, 175, 255, 0.42);
+  box-shadow:
+    0 0 12px rgba(90, 120, 255, 0.28),
+    inset 0 0 12px rgba(90, 120, 255, 0.18);
+  transition: border-color 0.08s ease-out, box-shadow 0.08s ease-out;
 }
+
+#stick.active::before {
+  border-color: rgba(185, 205, 255, 0.85);
+  box-shadow:
+    0 0 20px rgba(120, 150, 255, 0.5),
+    inset 0 0 18px rgba(120, 150, 255, 0.3);
+}
+
+/* View, pause and mute, on the score row. Placed by main.js. */
+#hud-buttons {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* Deliberate, low-frequency taps: small, and up where a flying thumb never
+   goes. Translucent, because the sky shows through behind them. */
+.tbtn {
+  flex: 0 1 44px;
+  min-width: 28px;
+  height: 100%;
+  padding: 0;
+  border: 1px solid #2a2a3a;
+  border-radius: 9px;
+  background: rgba(20, 20, 28, 0.72);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  touch-action: none;
+}
+
+.tbtn:active { background: rgba(35, 35, 58, 0.9); }
 
 @media (pointer: coarse) {
   #legend { display: none; }
-}
-
-/* Landscape phones: the strip has to stay horizontal and full width, or it has
-   no travel to slide along. Height is the scarce axis, so shrink it instead. */
-@media (pointer: coarse) and (orientation: landscape) {
-  #cabinet { gap: 6px; padding-top: 4px; }
-  #pad { min-height: 56px; }
-  #pad-knob { width: 40px; height: 40px; margin: -20px 0 0 -20px; }
-  #pad-label { display: none; }
-  .tbtn-sm { height: 26px; }
-  #touch-side { flex-direction: row; }
 }

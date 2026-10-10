@@ -28,23 +28,30 @@ also the automatic fallback if the browser has no WebGL.
 ### Touch
 
 On coarse-pointer devices the game switches to touch controls automatically.
+The cockpit fills the whole screen, edge to edge.
 
-- **Slide a finger along the strip below the playfield.** Where your thumb sits
-  on the strip is where the ship sits on the screen, end to end. Lift off and
-  the ship holds station.
+- **The cockpit's own control column is the control.** A ring sits over it on
+  the screen: put a thumb in the ring and push left or right, and the stick
+  goes with you. It is a rate control, like the real thing — how far you push
+  is how fast you fly, and letting go centres it and holds station. Wherever
+  your thumb lands counts as centre, so landing a little off the stick never
+  throws the ship sideways.
 - **Firing is automatic.** There is no fire button, so there is nothing to hold
   and nothing to cover the screen with.
-- Nothing on the playfield itself is a control — a thumb there would hide the
-  dive you are trying to read. Tapping it only starts a game.
-- Pause, mute and the view swap sit off to the side, small, out of the way of a
-  flying thumb.
-- The playfield scales to fit the phone rather than snapping to whole pixels,
-  so it fills the screen instead of wasting a third of it.
+- Nothing else on the screen is a control — a thumb out on the glass would hide
+  the dive you are trying to read. Tapping it only starts a game.
+- View, pause and mute sit up on the score row, beside HIGH SCORE, well away
+  from the thumb that is flying.
+- In the outside view there is no stick to put the ring over, and the ship is
+  where it was, so the ring drops to the bottom of the screen (the corner, in
+  landscape).
+- In `?flat` the playfield keeps its cabinet shape and the ring sits beside or
+  below it instead.
 - A mouse never takes over steering, so desktop play is unchanged.
-- **The control column in the cockpit moves with your thumb.** It reads how the
-  ship actually moved rather than which input moved it, so the slide strip, the
-  arrow keys and the headless bot all deflect it without any of them knowing
-  the cockpit exists.
+- Held, the stick follows your thumb even when the ship cannot — pushed into
+  the wall, it stays over. Otherwise it reads how the ship actually moved
+  rather than which input moved it, so the arrow keys and the headless bot
+  deflect it too, without either of them knowing the cockpit exists.
 
 ## The two views
 
@@ -183,6 +190,15 @@ every 70,000 after.
 The HUD, banners and title screen are still drawn by `game.js` onto the arcade
 canvas, which sits over the 3D one as a transparent overlay — the same code
 paints them in both views rather than a second implementation that can drift.
+In the cockpit the overlay is the shape of the screen rather than 224×288: the
+arcade frame sits in the middle of it, the score row is pinned to the top and
+lives and stage flags to the bottom corners.
+
+The view fills the screen, so its shape is whatever the screen's is. The lens
+holds its horizontal angle and lets the vertical follow, with a floor so a
+landscape screen cannot crop the control column off the bottom — there the
+horizontal widens instead. The chase lens never goes narrower than it was on
+the cabinet frame, so a tall phone gets more sky rather than losing the wings.
 
 Flight paths are built by driving a pen — `line(d)` and `turn(radius, degrees)`
 — which samples a point every 2px. Followers then walk the sample list at a
@@ -196,7 +212,7 @@ The game is exposed as `window.game`, which the headless tools drive directly.
 npm run playtest            # bot plays for 70s, reports state + console errors
 npm run playtest -- 200 god # longer run, lives topped up to reach later stages
 npm run test:capture        # capture -> rescue -> dual, half-loss, respawn hold
-npm run test:touch          # touch controls + layout on phone viewports
+npm run test:touch          # stick, buttons + full-screen layout on phones
 npm run shots:cockpit       # cockpit screenshots at the moments worth seeing
 ```
 

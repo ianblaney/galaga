@@ -141,8 +141,8 @@ await page.keyboard.press('Space');
 await page.waitForTimeout(90);
 await shot('fps-fire');
 
-// And the phone: the slide strip has to drive the stick, and the cockpit has
-// to survive being squeezed into a portrait playfield.
+// And the phone: the cockpit fills the screen, the ring sits over the stick,
+// and pushing a thumb in the ring has to move it.
 // The desktop page goes first: two live WebGL contexts on the software
 // rasteriser starve each other and the second page never finishes booting.
 await page.close();
@@ -157,22 +157,35 @@ phone.on('pageerror', (e) => note(`phone pageerror: ${e.message}`));
 phone.on('console', (m) => m.type() === 'error' && note(`phone console: ${m.text()}`));
 await phone.goto(url);
 await phone.waitForFunction(() => window.game && window.game.keys, null, { timeout: 60000 });
-await phone.tap('#pad');
+await phone.touchscreen.tap(195, 250);
 await phone.waitForTimeout(2500);
 
-// Slide the thumb hard left, and catch the stick while it is still moving.
-const pad = await phone.locator('#pad').boundingBox();
-await phone.touchscreen.tap(pad.x + pad.width * 0.85, pad.y + pad.height / 2);
-await phone.waitForTimeout(400);
-await phone.touchscreen.tap(pad.x + pad.width * 0.15, pad.y + pad.height / 2);
-await phone.waitForTimeout(80);
+// Push the stick hard left and hold it there for the shot, thumb still down.
+const ring = await phone.locator('#stick').boundingBox();
+const cdp = await phone.context().newCDPSession(phone);
+const touch = (type, x) => cdp.send('Input.dispatchTouchEvent', {
+  type,
+  touchPoints: type === 'touchEnd' ? [] : [{ x, y: ring.y + ring.height / 2, id: 1 }],
+});
+const cx = ring.x + ring.width / 2;
+await touch('touchStart', cx);
+for (let i = 1; i <= 6; i++) { await touch('touchMove', cx - (ring.width / 2) * (i / 6)); await phone.waitForTimeout(30); }
+await phone.waitForFunction(() => window.view3d.stickHeld < -0.9, null, { timeout: 5000 });
+await phone.waitForTimeout(250);
 console.log('phone state:', await phone.evaluate(() => ({
   state: window.game.state,
-  beaming: window.game.enemies.some((e) => e.state === 'beam'),
-  captured: !!window.game.captive,
+  stick: window.view3d.stickHeld,
+  x: Math.round(window.game.player.x),
   shots: window.game.shots,
 })));
 await phone.screenshot({ path: join(SHOTS, 'fps-phone.png') });
+await touch('touchEnd', 0);
+
+// From outside, the ring stays where the stick would be. It must not sit on
+// the ship you swapped views to watch.
+await phone.locator('#t-view').tap();
+await phone.waitForTimeout(600);
+await phone.screenshot({ path: join(SHOTS, 'fps-phone-chase.png') });
 await phone.close();
 
 // ?flat has to keep working: it is the fallback when there is no WebGL, and

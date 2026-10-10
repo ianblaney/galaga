@@ -75,7 +75,7 @@ const phone = await browser.newPage({
 phone.on('pageerror', (e) => errors.push(`phone: ${e.message}`));
 await phone.goto(url);
 await phone.waitForFunction(() => window.game && window.game.keys, null, { timeout: 60000 });
-await phone.tap('#pad');
+await phone.tap('#game');
 await phone.waitForTimeout(3000);
 await phone.screenshot({ path: join(SHOTS, `${OUT}-phone.png`) });
 await phone.close();

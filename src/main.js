@@ -32,67 +32,140 @@ if (!wantFlat) {
 }
 window.view3d = view;
 
-// --- Presentation: scale the 224x288 canvas up to fit the viewport ----------
+// --- Layout -----------------------------------------------------------------
+// Everything on the stage is placed from here, because every piece of it hangs
+// off the same few numbers: the size of the screen, where the safe area is, and
+// the scale the arcade art is drawn at.
 
 const coarse = window.matchMedia('(pointer: coarse)').matches;
 
-const cabinet = document.getElementById('cabinet');
+const stage = document.getElementById('stage');
+const safeArea = document.getElementById('safe');
+const legend = document.getElementById('legend');
+const stick = document.getElementById('stick');
+const buttons = document.getElementById('hud-buttons');
+
+// The arcade x the HIGH SCORE block ends at; the buttons start just past it.
+const SCORE_END = 138;
 
 function visible(el) {
   return el && el.offsetParent !== null;
 }
 
-function resize() {
-  const touch = document.getElementById('touch');
-  // In landscape the controls sit beside the playfield, so they cost width
-  // rather than height. Ask the layout which way it went.
-  const sideways = getComputedStyle(cabinet).flexDirection === 'row';
-  const chrome = [document.getElementById('legend')]
-    .filter(visible)
-    .reduce((h, el) => h + el.offsetHeight, 0);
+function place(el, x, y, w, h) {
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+  if (w != null) el.style.width = `${w}px`;
+  if (h != null) el.style.height = `${h}px`;
+}
 
-  const panel = visible(touch) ? (sideways ? touch.offsetWidth : touch.offsetHeight) : 0;
-  const chromeH = chrome + (sideways ? 0 : panel) + 40;
-  const chromeW = 16 + (sideways ? panel + 14 : 0);
+/** CSS px per arcade px for the arcade art, fitted to w x h. */
+function arcadeScale(w, h) {
+  const fit = Math.min(w / W, h / H);
+  // Less room than the native 224x288. Shrink, or the score row gets clipped
+  // off the top of a landscape phone.
+  if (fit < 1) return Math.max(fit, 0.4);
+  // Whole-pixel scaling keeps the art crisp, but on a phone it can throw away
+  // a third of the screen. Take the fractional fit when rounding is costly.
+  const whole = Math.floor(fit);
+  return coarse && whole / fit < 0.85 ? fit : whole;
+}
 
-  // visualViewport tracks the space actually left over by mobile browser chrome.
-  const vw = window.visualViewport?.width ?? window.innerWidth;
-  const vh = window.visualViewport?.height ?? window.innerHeight;
-  const availW = vw - chromeW;
-  const availH = vh - chromeH;
+let stickReach = 50; // CSS px of thumb travel that is full deflection
 
-  const fit = Math.min(availW / W, availH / H);
+function layout() {
+  const vw = stage.clientWidth;
+  const vh = stage.clientHeight;
+  const safe = safeArea.getBoundingClientRect();
+  const ring = Math.max(40, Math.min(64, Math.min(vw, vh) * 0.14)); // ring radius
+  stickReach = ring;
+
   let scale;
-  if (fit < 1) {
-    // Less room than the native 224x288. Shrink, or the playfield overflows
-    // and the score row gets clipped off the top of a landscape phone.
-    scale = Math.max(fit, 0.4);
+  let col; // the arcade frame's 224px column on screen, which the score sits in
+  let right; // how far right the buttons may go
+  let stickAt;
+
+  if (view) {
+    // The cockpit is the whole screen. The overlay covers the safe area, in
+    // arcade pixels at the art's scale, so it is the shape of the screen and
+    // the score sits on the sky rather than in a box of its own.
+    view.setSize(vw, vh);
+    scale = arcadeScale(safe.width, safe.height);
+    const cw = Math.round(safe.width / scale);
+    const ch = Math.round(safe.height / scale);
+    game.setOverlaySize(cw, ch);
+    place(canvas, safe.left, safe.top, safe.width, safe.height);
+    col = safe.left + Math.floor((cw - W) / 2) * (safe.width / cw);
+    right = safe.right;
+
+    if (view.chase) {
+      // From outside there is no stick to put it over, and where the stick
+      // was is where the ship now sits. So it drops to the bottom of the
+      // screen, below the ship — or into the corner, on a frame too short to
+      // fit it underneath.
+      stickAt = vw > vh
+        ? [safe.right - ring - 24, safe.bottom - ring - 16]
+        : [safe.left + safe.width / 2, safe.bottom - ring - Math.max(24, vh * 0.05)];
+    } else {
+      // The ring goes over the control column, centred a little way down it
+      // from the grip so it takes in the whole stick. A wide frame can push
+      // the column toward the bottom edge, so it is kept on screen regardless.
+      const { grip, base } = view.stickOnScreen();
+      const px = (p) => [((p.x + 1) / 2) * vw, ((1 - p.y) / 2) * vh];
+      const [gx, gy] = px(grip);
+      const [bx, by] = px(base);
+      stickAt = [gx + (bx - gx) * 0.35, Math.min(gy + (by - gy) * 0.35, safe.bottom - ring - 6)];
+    }
   } else {
-    // Whole-pixel scaling keeps the art crisp, but on a phone it can throw away
-    // a third of the screen. Take the fractional fit when rounding is costly.
-    const whole = Math.floor(fit);
-    scale = coarse && whole / fit < 0.85 ? fit : whole;
+    // The flat view is the cabinet: the 224x288 playfield, centred, with room
+    // kept beside or below it for the stick so a thumb never covers the game.
+    game.setOverlaySize(W, H);
+    const legendH = visible(legend) ? legend.offsetHeight + 12 : 0;
+    const sideways = vw > vh;
+    const zone = coarse ? ring * 2 + 40 : 0;
+    const availW = safe.width - 16 - (sideways ? zone : 0);
+    const availH = safe.height - 16 - legendH - (sideways ? 0 : zone);
+    scale = arcadeScale(availW, availH);
+    const w = Math.round(W * scale);
+    const h = Math.round(H * scale);
+    const x = safe.left + (safe.width - (sideways ? zone : 0) - w) / 2;
+    const y = safe.top + (safe.height - legendH - (sideways ? 0 : zone) - h) / 2;
+    place(canvas, x, y, w, h);
+    col = x;
+    right = x + w;
+    stickAt = sideways ? [x + w + zone / 2, y + h * 0.7] : [safe.left + safe.width / 2, y + h + zone / 2];
   }
 
-  const cssW = Math.round(W * scale);
-  const cssH = Math.round(H * scale);
-  canvas.style.width = `${cssW}px`;
-  canvas.style.height = `${cssH}px`;
-  // The 3D canvas is stretched over the same frame by CSS; it still needs its
-  // drawing buffer and projection told about the new size.
-  view?.setSize(cssW, cssH);
+  // The stick's element is the touch target; its ring is drawn 12px inside.
+  const hit = ring + 12;
+  place(stick, stickAt[0] - hit, stickAt[1] - hit, hit * 2, hit * 2);
+
+  // The buttons sit on the score row, just past HIGH SCORE. On a portrait
+  // phone that runs them out to the right edge; on anything wider they stay
+  // beside the score rather than drifting off to the far corner.
+  const n = [...buttons.children].filter((b) => !b.classList.contains('hidden')).length;
+  const gap = 6;
+  const from = col + SCORE_END * scale;
+  const width = Math.max(n * 28 + (n - 1) * gap, Math.min(right - 6 - from, n * 44 + (n - 1) * gap));
+  const bh = Math.max(28, Math.min(40, 18 * scale));
+  // Centred on the two lines of the score, which run from arcade y 3 to 19.
+  const top = (view ? safe.top : canvas.offsetTop) + Math.max(4, 11 * scale - bh / 2);
+  place(buttons, Math.min(from, right - 6 - width), top, width, bh);
 }
 
 if (coarse) {
-  document.getElementById('touch').classList.remove('hidden');
+  stick.classList.remove('hidden');
+  buttons.classList.remove('hidden');
   document.body.classList.add('touch-mode');
-  // No fire button any more, so the ship fires for itself the whole time.
+  // No fire button, so the ship fires for itself the whole time.
   game.setTouch('autoFire', true);
 }
-window.addEventListener('resize', resize);
-window.addEventListener('orientationchange', () => setTimeout(resize, 200));
-window.visualViewport?.addEventListener('resize', resize);
-resize();
+window.addEventListener('resize', layout);
+window.addEventListener('orientationchange', () => setTimeout(layout, 200));
+window.visualViewport?.addEventListener('resize', layout);
+// iOS resizes the fixed stage as its toolbars come and go, without always
+// saying so through the window.
+if (window.ResizeObserver) new ResizeObserver(layout).observe(stage);
 
 // --- Input ------------------------------------------------------------------
 
@@ -125,6 +198,7 @@ function toggleView() {
   if (!view) return;
   view.toggleView();
   syncButtons();
+  layout(); // the stick ring moves out from under the ship
 }
 
 document.getElementById('t-pause').addEventListener('click', () => {
@@ -150,78 +224,79 @@ function syncButtons() {
     'aria-label', view && view.chase ? 'Cockpit view' : 'Outside view');
 }
 syncButtons();
+// After the buttons are settled: how many are showing decides how wide the
+// row on the score line has to be.
+layout();
 
-// Tapping the playfield starts a game (and unlocks audio), but never steers —
-// a thumb on the canvas covers the dive you are trying to read.
+// Tapping the screen starts a game (and unlocks audio), but never steers — a
+// thumb out on the glass covers the dive you are trying to read.
 canvas.addEventListener('pointerdown', (ev) => {
   ev.preventDefault();
   game.touchFire();
 });
 
-// --- Slide strip ------------------------------------------------------------
-// The touch control: a full-width strip below the playfield. Where you put your
-// thumb along it is where the ship goes, so the whole run of the strip maps to
-// the whole run of the playfield. Firing is automatic — with no fire button
-// there is nothing to hold, and nothing to cover the screen with.
+// --- Stick --------------------------------------------------------------------
+// The touch control is the cockpit's own control column: a ring over it on the
+// screen, and a thumb in the ring moves it. It is a rate control, like the real
+// thing — how far you push is how fast you go, and letting go centres it and
+// holds station. Wherever the thumb lands is centre, so landing a little off
+// the stick never throws the ship sideways. Firing is automatic: with no fire
+// button there is nothing to hold, and nothing to cover the screen with.
 
-const pad = document.getElementById('pad');
-const knob = document.getElementById('pad-knob');
-let padId = null;
+const DEAD = 0.08; // a resting thumb wobbles; this much of the throw is centre
+let stickId = null;
+let stickFrom = 0;
 
-// The knob has width, so the usable travel is inset by half of it at each end.
-// Aim and knob must share this geometry or the knob clips at the ends.
-function padGeometry() {
-  const r = pad.getBoundingClientRect();
-  const inset = Math.min(knob.offsetWidth / 2 || 28, r.width / 6);
-  return { r, inset, travel: Math.max(1, r.width - inset * 2) };
+function steer(d) {
+  if (d == null) {
+    game.setSteer(0);
+    view?.setStick(null);
+    stick.setAttribute('aria-valuenow', '0');
+    return;
+  }
+  const k = Math.max(-1, Math.min(1, d));
+  // Past the dead zone, a curve: the first part of the throw is fine
+  // adjustment rather than half speed.
+  const m = Math.max(0, (Math.abs(k) - DEAD) / (1 - DEAD));
+  game.setSteer(Math.sign(k) * m ** 1.5);
+  view?.setStick(k);
+  stick.setAttribute('aria-valuenow', String(Math.round(k * 100)));
 }
 
-function aimFromPad(ev) {
-  const { r, inset, travel } = padGeometry();
-  const t = (ev.clientX - r.left - inset) / travel;
-  return Math.min(Math.max(t, 0), 1);
-}
-
-function applyAim(t) {
-  const { inset, travel } = padGeometry();
-  game.setAim(t * W);
-  knob.style.left = `${inset + t * travel}px`;
-  pad.setAttribute('aria-valuenow', String(Math.round(t * 100)));
-}
-
-pad.addEventListener('pointerdown', (ev) => {
+stick.addEventListener('pointerdown', (ev) => {
   ev.preventDefault();
   sfx.resume();
   // First touch of the run also drops the coin on the title screen.
   if (game.state === 'title' || game.state === 'gameover') game.touchFire();
-  padId = ev.pointerId;
-  pad.setPointerCapture?.(ev.pointerId);
-  pad.classList.add('active');
-  applyAim(aimFromPad(ev));
+  stickId = ev.pointerId;
+  stickFrom = ev.clientX;
+  stick.setPointerCapture?.(ev.pointerId);
+  stick.classList.add('active');
+  steer(0);
 });
 
-pad.addEventListener('pointermove', (ev) => {
-  if (ev.pointerId !== padId) return;
+stick.addEventListener('pointermove', (ev) => {
+  if (ev.pointerId !== stickId) return;
   ev.preventDefault();
-  applyAim(aimFromPad(ev));
+  steer((ev.clientX - stickFrom) / stickReach);
 });
 
-function endPad(ev) {
-  if (ev.pointerId !== padId) return;
-  padId = null;
-  pad.releasePointerCapture?.(ev.pointerId);
-  pad.classList.remove('active');
-  // Lift your thumb and the ship holds station rather than snapping anywhere.
-  game.setAim(null);
+function endStick(ev) {
+  if (ev.pointerId !== stickId) return;
+  stickId = null;
+  stick.releasePointerCapture?.(ev.pointerId);
+  stick.classList.remove('active');
+  steer(null);
 }
 
-pad.addEventListener('pointerup', endPad);
-pad.addEventListener('pointercancel', endPad);
+stick.addEventListener('pointerup', endStick);
+stick.addEventListener('pointercancel', endStick);
 
-// Losing the tab mid-slide must not leave the ship flying on its own.
+// Losing the tab mid-push must not leave the ship flying on its own.
 function releaseAll() {
-  padId = null;
-  game.setAim(null);
+  stickId = null;
+  stick.classList.remove('active');
+  steer(null);
   game.keys.clear();
   if (coarse) game.setTouch('autoFire', true);
 }

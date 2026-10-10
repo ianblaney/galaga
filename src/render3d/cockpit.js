@@ -39,11 +39,11 @@ const RED = '#ff5a3c';
 const DEG = Math.PI / 180;
 const T = (deg) => Math.tan(deg * DEG);
 
-// The HUD canvas is the arcade screen at 2x, and it is stretched over the whole
-// visible frame — so a HUD pixel is a fixed fraction of the view however wide
-// the view gets, and anything the renderer projects onto it lands in the right
-// place right out to the corners.
-const HUD_W = W * 2;
+// The HUD canvas is stretched over the whole visible frame, so a HUD pixel is a
+// fixed fraction of the view however wide the view gets, and anything the
+// renderer projects onto it lands in the right place right out to the corners.
+// Its height is fixed and its width follows the frame, which keeps its pixels
+// square on a screen of any shape.
 const HUD_H = H * 2;
 
 function makeScreen(w, h) {
@@ -501,7 +501,7 @@ export function buildCockpit(frame) {
   // rather than a decal painted over the ships. It is stretched over the whole
   // frame, which is what lets a lock box follow a threat right out to the
   // peripheral glass instead of falling off the edge of a small plane.
-  const hud = makeScreen(HUD_W, HUD_H);
+  const hud = makeScreen(W * 2, HUD_H); // re-sized to the frame by setFrame
   const hudPlane = new THREE.Mesh(
     new THREE.PlaneGeometry(1, 1),
     new THREE.MeshBasicMaterial({
@@ -517,11 +517,19 @@ export function buildCockpit(frame) {
       const d = 0.55;
       m.position.set(0, 0, -d);
       m.scale.set(2 * d * T(h), 2 * d * T(v), 1);
+      const w = Math.max(64, Math.round((HUD_H * T(h)) / T(v)));
+      if (hud.canvas.width !== w) {
+        hud.canvas.width = w;
+        // A texture cannot change size in place; drop it and let it re-upload.
+        hud.tex.dispose();
+        hud.tex.needsUpdate = true;
+      }
     },
   });
 
   // ---- The stick ------------------------------------------------------------
-  // The whole point of the cockpit: slide your thumb and this moves with it.
+  // The whole point of the cockpit: on a phone your thumb is on it, through a
+  // ring the page lays over it, and it moves the way you push.
   //
   // A real column sits between the pilot's knees, which from a fixed eye with
   // no head movement is a long way below the boresight. So it is mounted on
@@ -554,6 +562,13 @@ export function buildCockpit(frame) {
   trigger.scale.set(0.033, 0.026, 0.021);
   trigger.position.set(0, stickH + 0.055, 0.046);
   stickPivot.add(trigger);
+
+  // Where the column stands, in the camera's frame, so the page can put the
+  // touch ring over it. Neither point moves: the stick tilts about its base.
+  const stick = {
+    base: stickPivot.position.clone(),
+    grip: stickPivot.position.clone().add(new THREE.Vector3(0, grip.position.y, 0)),
+  };
 
   // Throttle on the left console, parked forward. It creeps with the stage.
   const throttle = new THREE.Group();
@@ -682,6 +697,7 @@ export function buildCockpit(frame) {
   }
 
   function paintHud(ctx, s) {
+    const HUD_W = ctx.canvas.width;
     ctx.clearRect(0, 0, HUD_W, HUD_H);
     // Nothing is projected on the glass on the attract screen — the title art
     // is drawn on the same rectangle, and a reticle through the middle of it
@@ -756,8 +772,8 @@ export function buildCockpit(frame) {
       ctx.strokeStyle = RED;
       ctx.lineWidth = 2.5;
       // Corners only — a full box hides the ship you're trying to shoot.
-      const x0 = cx + th.sx - sz / 2;
-      const y0 = cy + th.sy - sz / 2;
+      const x0 = cx + th.nx * cx - sz / 2;
+      const y0 = cy - th.ny * cy - sz / 2;
       const c = sz * 0.3;
       ctx.beginPath();
       for (const [ox, oy, dx, dy] of [
@@ -786,16 +802,18 @@ export function buildCockpit(frame) {
   return {
     group,
     setFrame,
+    stick,
 
     /**
      * @param s  cockpit state assembled by view3d.js:
-     *           lateral   -1..1 thumb/steer input, drives the stick
+     *           stick     -1..1 where the thumb, or failing that the ship's
+     *                     own motion, has the stick
      *           firing    true on the frames a shot leaves the ship
      */
     update(dt, s) {
-      // Ease toward the input so the column has some mass: a raw slide
+      // Ease toward the input so the column has some mass: a raw input
       // teleports the stick and it reads as a jump cut.
-      stickX += (s.lateral - stickX) * Math.min(1, dt * 12);
+      stickX += (s.stick - stickX) * Math.min(1, dt * 12);
       stickPivot.rotation.z = -stickX * 0.42;
       stickPivot.rotation.x = -0.10 * Math.abs(stickX) - (s.firing ? 0.06 : 0);
 

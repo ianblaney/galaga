@@ -11,6 +11,7 @@ const FORM_TOP = 40;
 const PLAYER_Y = 258;
 const PLAYER_MIN_X = 10;
 const PLAYER_MAX_X = W - 10;
+const STICK_SPEED = 180; // arcade px/s at full stick deflection
 
 // row -> enemy type and which columns are occupied
 const ROW_PLAN = [
@@ -114,7 +115,7 @@ export class Game {
 
     this.keys = new Set();
     this.firePressed = false;
-    this.aimX = null;
+    this.steer = 0;
     this.paused = false;
     this.muted = false;
 
@@ -280,10 +281,22 @@ export class Game {
     }
   }
 
-  // Steer straight to an x in arcade pixels (drag control). null hands control
-  // back to the left/right keys.
-  setAim(x) {
-    this.aimX = x;
+  // Analog steering from the touch stick: -1 hard left, 1 hard right, 0 (or
+  // null) hands control back to the left/right keys.
+  setSteer(v) {
+    this.steer = v ? Math.max(-1, Math.min(1, v)) : 0;
+  }
+
+  /**
+   * Resize the overlay canvas, in arcade pixels. In cockpit mode it covers the
+   * whole screen, so it is whatever shape the screen is rather than 224x288.
+   */
+  setOverlaySize(w, h) {
+    if (this.canvas.width === w && this.canvas.height === h) return;
+    this.canvas.width = w;
+    this.canvas.height = h;
+    // Resizing a canvas resets its context, smoothing included.
+    this.ctx.imageSmoothingEnabled = false;
   }
 
   togglePause() {
@@ -405,12 +418,11 @@ export class Game {
     p.fireCd = Math.max(0, p.fireCd - dt);
 
     const speed = 108;
-    if (this.aimX != null) {
-      // Drag control: close the gap fast, but cap the rate so a flick across
-      // the screen can't teleport the ship past incoming fire.
-      const d = this.aimX - p.x;
-      const step = speed * 2.2 * dt;
-      p.x += Math.abs(d) <= step ? d : Math.sign(d) * step;
+    if (this.steer) {
+      // The stick is a rate control: how far it is pushed is how fast you go.
+      // Full deflection is quicker than the keys, so the far wall is a flick
+      // away, but never so quick it can carry you through incoming fire.
+      p.x += this.steer * STICK_SPEED * dt;
     } else {
       const left = this.keys.has('ArrowLeft') || this.keys.has('KeyA');
       const right = this.keys.has('ArrowRight') || this.keys.has('KeyD');
@@ -976,22 +988,32 @@ export class Game {
    */
   drawOverlay() {
     const c = this.ctx;
-    c.clearRect(0, 0, W, H);
+    // The overlay is the shape of the screen, not of the cabinet. The arcade
+    // frame sits in the middle of it, so the title and banners land on the
+    // boresight; the score row is pinned to the top and lives and flags to
+    // the bottom corners, out of the way of the view.
+    const cw = this.canvas.width;
+    const ch = this.canvas.height;
+    const ox = Math.floor((cw - W) / 2);
+    const oy = Math.floor((ch - H) / 2);
+    c.clearRect(0, 0, cw, ch);
 
+    this.drawHud(c, cw, ch);
+    c.save();
+    c.translate(ox, oy);
     if (this.state === 'title') {
       this.drawTitle(c);
-      this.drawHud(c);
+      c.restore();
       return;
     }
-
-    this.drawHud(c);
     if (this.state === 'gameover') this.drawGameOver(c);
     this.drawBanner(c);
+    c.restore();
 
     if (this.paused) {
       c.fillStyle = 'rgba(0,0,0,0.6)';
-      c.fillRect(0, 0, W, H);
-      drawText(c, 'PAUSED', W / 2, H / 2 - 4, '#ffffff', 'center');
+      c.fillRect(0, 0, cw, ch);
+      drawText(c, 'PAUSED', cw / 2, ch / 2 - 4, '#ffffff', 'center');
     }
   }
 
@@ -1107,25 +1129,31 @@ export class Game {
     c.globalAlpha = 1;
   }
 
-  drawHud(c) {
+  /**
+   * Score row along the top, lives and stage flags in the bottom corners. The
+   * score row keeps its arcade spacing, centred over the arcade frame; the
+   * corners are the corners of whatever canvas this is.
+   */
+  drawHud(c, cw = W, ch = H) {
+    const ox = Math.floor((cw - W) / 2);
     if (this.state === 'title' || Math.floor(this.t * 3) % 2 === 0) {
-      drawText(c, '1UP', 12, 3, '#ff4040');
+      drawText(c, '1UP', ox + 12, 3, '#ff4040');
     }
-    drawText(c, 'HIGH SCORE', 76, 3, '#ff4040');
+    drawText(c, 'HIGH SCORE', ox + 76, 3, '#ff4040');
 
     const score = this.state === 'title' ? 0 : this.score;
-    drawText(c, String(score).padStart(2, '0'), 46, 12, '#ffffff', 'center');
-    drawText(c, String(this.highScore).padStart(2, '0'), 118, 12, '#ffffff', 'center');
+    drawText(c, String(score).padStart(2, '0'), ox + 46, 12, '#ffffff', 'center');
+    drawText(c, String(this.highScore).padStart(2, '0'), ox + 118, 12, '#ffffff', 'center');
 
     if (this.state === 'title') return;
 
     // Lives, bottom-left.
     for (let i = 0; i < Math.min(this.lives - (this.player.alive ? 1 : 0), 6); i++) {
-      c.drawImage(SPR.fighter, 2 + i * 14, H - 14);
+      c.drawImage(SPR.fighter, 2 + i * 14, ch - 14);
     }
 
     // Stage flags, bottom-right.
-    let x = W - 2;
+    let x = cw - 2;
     let n = this.stage;
     const flags = [
       [50, '#40d0e0'],
@@ -1142,9 +1170,9 @@ export class Game {
         x -= 9;
         drawn += 1;
         c.fillStyle = colour;
-        c.fillRect(x, H - 13, 7, 6);
+        c.fillRect(x, ch - 13, 7, 6);
         c.fillStyle = '#ffffff';
-        c.fillRect(x, H - 13, 1, 11);
+        c.fillRect(x, ch - 13, 1, 11);
       }
     }
   }
